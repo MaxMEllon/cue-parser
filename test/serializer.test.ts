@@ -72,14 +72,14 @@ describe('CUE Serializer', () => {
             mode: 'AUDIO',
             title: 'Track 1',
             file: { filename: 'track1.wav', format: 'WAVE' },
-            indexes: [{ number: 1, time: { minutes: 0, seconds: 0, frames: 0 } }]
+            indexes: [{ number: 1, time: { hour: 0, minute: 0, second: 0 } }]
           },
           {
             number: 2,
             mode: 'AUDIO',
             title: 'Track 2',
             file: { filename: 'track2.wav', format: 'WAVE' },
-            indexes: [{ number: 1, time: { minutes: 3, seconds: 30, frames: 0 } }]
+            indexes: [{ number: 1, time: { hour: 3, minute: 30, second: 0 } }]
           }
         ]
       };

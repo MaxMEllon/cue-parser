@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCueSheet, formatMSFTime, msfToSeconds } from '../src/index.js';
+import { parseCueSheet, formatHMSTime, hmsToSeconds } from '../src/index.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -96,21 +96,23 @@ CATALOG 123
         const result = parseCueSheet(`TRACK 01 AUDIO\\nINDEX 01 ${input}`);
         expect(result.errors).toHaveLength(1); // INDEX outside TRACK error
         // Test the utility directly
-        const timeStr = formatMSFTime(expected);
+        // Convert old MSF format to new HMS format for testing
+        const hmsExpected = { hour: expected.minutes, minute: expected.seconds, second: expected.frames };
+        const timeStr = formatHMSTime(hmsExpected);
         expect(timeStr).toBe(input.padStart(8, '0').replace(/:/g, ':'));
       });
     });
 
     it('should convert MSF to seconds correctly', () => {
-      expect(msfToSeconds({ minutes: 1, seconds: 30, frames: 45 })).toBeCloseTo(90.60, 2);
-      expect(msfToSeconds({ minutes: 0, seconds: 2, frames: 33 })).toBeCloseTo(2.44, 2);
-      expect(msfToSeconds({ minutes: 0, seconds: 0, frames: 0 })).toBe(0);
+      expect(hmsToSeconds({ hour: 1, minute: 30, second: 45 })).toBe(5445);
+      expect(hmsToSeconds({ hour: 0, minute: 2, second: 33 })).toBe(153);
+      expect(hmsToSeconds({ hour: 0, minute: 0, second: 0 })).toBe(0);
     });
 
     it('should format MSF time with zero padding', () => {
-      expect(formatMSFTime({ minutes: 1, seconds: 30, frames: 45 })).toBe('01:30:45');
-      expect(formatMSFTime({ minutes: 0, seconds: 2, frames: 33 })).toBe('00:02:33');
-      expect(formatMSFTime({ minutes: 12, seconds: 0, frames: 0 })).toBe('12:00:00');
+      expect(formatHMSTime({ hour: 1, minute: 30, second: 45 })).toBe('01:30:45');
+      expect(formatHMSTime({ hour: 0, minute: 2, second: 33 })).toBe('00:02:33');
+      expect(formatHMSTime({ hour: 12, minute: 0, second: 0 })).toBe('12:00:00');
     });
   });
 

@@ -26,7 +26,7 @@
 
 // Export all types
 export type {
-  MSFTime,
+  HMSTime,
   TrackFlag,
   TrackMode,
   FileFormat,
@@ -42,15 +42,15 @@ export type {
 
 // Export utilities
 export {
-  parseMSFTime,
-  formatMSFTime,
-  msfToSeconds,
-  secondsToMSF,
+  parseHMSTime,
+  formatHMSTime,
+  hmsToSeconds,
+  secondsToHMS,
   msfToFrames,
   framesToMSF,
-  addMSFTime,
-  subtractMSFTime,
-  compareMSFTime
+  addHMSTime,
+  subtractHMSTime,
+  compareHMSTime
 } from './utils.js';
 
 // Export parser
@@ -62,3 +62,6 @@ export {
   formatCueSheet,
   createMinimalCueSheet
 } from './serializer.js';
+
+// Export YouTube serializer
+export { serializeYouTubeTimeline } from './youtube-serializer.js';

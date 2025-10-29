@@ -1,5 +1,5 @@
 import type { CueSheet, CueGlobal, Track, TrackIndex } from './types.js';
-import { formatMSFTime } from './utils.js';
+import { formatHMSTime } from './utils.js';
 
 /**
  * CUE Sheet serializer - converts parsed CueSheet objects back to CUE format
@@ -161,7 +161,7 @@ function serializeTrackContent(track: Track, lines: string[]): void {
 
   // Add pregap
   if (track.pregap) {
-    lines.push(`\t\t\tPREGAP ${formatMSFTime(track.pregap)}`);
+    lines.push(`\t\t\tPREGAP ${formatHMSTime(track.pregap)}`);
   }
 
   // Add indexes
@@ -169,13 +169,13 @@ function serializeTrackContent(track: Track, lines: string[]): void {
     // Sort indexes by number
     const sortedIndexes = [...track.indexes].sort((a, b) => a.number - b.number);
     sortedIndexes.forEach(index => {
-      lines.push(`\t\t\tINDEX ${index.number.toString().padStart(2, '0')} ${formatMSFTime(index.time)}`);
+      lines.push(`\t\t\tINDEX ${index.number.toString().padStart(2, '0')} ${formatHMSTime(index.time)}`);
     });
   }
 
   // Add postgap
   if (track.postgap) {
-    lines.push(`\t\t\tPOSTGAP ${formatMSFTime(track.postgap)}`);
+    lines.push(`\t\t\tPOSTGAP ${formatHMSTime(track.postgap)}`);
   }
 
   // Add track remarks
@@ -286,7 +286,7 @@ export function createMinimalCueSheet(cueSheet: CueSheet): string {
     if (track.indexes) {
       const mainIndex = track.indexes.find(idx => idx.number === 1);
       if (mainIndex) {
-        lines.push(`\t\t\tINDEX 01 ${formatMSFTime(mainIndex.time)}`);
+        lines.push(`\t\t\tINDEX 01 ${formatHMSTime(mainIndex.time)}`);
       }
     }
   });  return lines.join('\n') + '\n';

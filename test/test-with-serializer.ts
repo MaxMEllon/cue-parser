@@ -1,4 +1,4 @@
-import { parseCueSheet, formatMSFTime, msfToSeconds, serializeCueSheet, formatCueSheet, createMinimalCueSheet } from '../src/index.js';
+import { parseCueSheet, formatHMSTime, hmsToSeconds, serializeCueSheet, formatCueSheet, createMinimalCueSheet } from '../src/index.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -63,8 +63,8 @@ function testSampleCueFile() {
       console.log(`   Track ${track.number}: "${track.title}"`);
       if (track.indexes) {
         track.indexes.forEach(idx => {
-          const timeStr = formatMSFTime(idx.time);
-          const seconds = msfToSeconds(idx.time);
+          const timeStr = formatHMSTime(idx.time);
+          const seconds = hmsToSeconds(idx.time);
           console.log(`     INDEX ${idx.number.toString().padStart(2, '0')}: ${timeStr} (${seconds.toFixed(2)}s)`);
         });
       }
@@ -95,8 +95,8 @@ function testMSFTimeUtilities() {
 
     // Test conversion to seconds
     console.log('   MSF to seconds conversion:');
-    console.log(`   1:30:45 = ${msfToSeconds({ minutes: 1, seconds: 30, frames: 45 }).toFixed(2)} seconds`);
-    console.log(`   0:02:33 = ${msfToSeconds({ minutes: 0, seconds: 2, frames: 33 }).toFixed(2)} seconds`);
+    console.log(`   1:30:45 = ${hmsToSeconds({ hour: 1, minute: 30, second: 45 })} seconds`);
+    console.log(`   0:02:33 = ${hmsToSeconds({ hour: 0, minute: 2, second: 33 })} seconds`);
 
     console.log('✅ MSF utilities working correctly');
 

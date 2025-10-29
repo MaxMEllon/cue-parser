@@ -10,7 +10,7 @@ import type {
   ParseResult,
   ParseError
 } from './types.js';
-import { parseMSFTime } from './utils.js';
+import { parseHMSTime } from './utils.js';
 
 /**
  * CUE Sheet parser class
@@ -112,10 +112,10 @@ export class CueParser {
         this.handleIndex(args, lineNumber);
         break;
       case 'PREGAP':
-        this.handlePregap(args, lineNumber);
+        this.handlePregap(args);
         break;
       case 'POSTGAP':
-        this.handlePostgap(args, lineNumber);
+        this.handlePostgap(args);
         break;
       case 'FLAGS':
         this.handleFlags(args, lineNumber);
@@ -327,28 +327,29 @@ export class CueParser {
       throw new Error(`Invalid index number: ${parts[0]!}. Must be between 0 and 99.`);
     }
 
-    const time = parseMSFTime(parts[1]!);    this.currentTrack.indexes = this.currentTrack.indexes || [];
+    const time = parseHMSTime(parts[1]!);
+    this.currentTrack.indexes = this.currentTrack.indexes || [];
     this.currentTrack.indexes.push({
       number: indexNumber,
       time
     });
   }
 
-  private handlePregap(args: string, lineNumber: number): void {
+  private handlePregap(args: string): void {
     if (!this.currentTrack) {
-      throw new Error('PREGAP command must be inside a TRACK');
+      throw new Error('PREGAP command must be within a TRACK');
     }
 
-    const time = parseMSFTime(args.trim());
+    const time = parseHMSTime(args.trim());
     this.currentTrack.pregap = time;
   }
 
-  private handlePostgap(args: string, lineNumber: number): void {
+  private handlePostgap(args: string): void {
     if (!this.currentTrack) {
-      throw new Error('POSTGAP command must be inside a TRACK');
+      throw new Error('POSTGAP command must be within a TRACK');
     }
 
-    const time = parseMSFTime(args.trim());
+    const time = parseHMSTime(args.trim());
     this.currentTrack.postgap = time;
   }
 

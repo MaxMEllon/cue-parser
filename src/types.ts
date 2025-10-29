@@ -2,11 +2,11 @@
  * CUE Sheet file format type definitions
  */
 
-/** MSF (Minutes:Seconds:Frames) format representation */
-export interface MSFTime {
-  minutes: number;
-  seconds: number;
-  frames: number;
+/** Time format representation (Hours:Minutes:Seconds) */
+export interface HMSTime {
+  hour: number;   // Hours (0-99)
+  minute: number; // Minutes (0-59)
+  second: number; // Seconds (0-59)
 }
 
 /** Track flags */
@@ -46,7 +46,7 @@ export interface CDText {
 /** Track index definition */
 export interface TrackIndex {
   number: number;  // 0-99
-  time: MSFTime;
+  time: HMSTime;
 }
 
 /** File definition */
@@ -69,8 +69,8 @@ export interface Track {
   isrc?: string;
   flags?: TrackFlag[];
   indexes?: TrackIndex[];
-  pregap?: MSFTime;
-  postgap?: MSFTime;
+  pregap?: HMSTime;
+  postgap?: HMSTime;
   cdtext?: CDText;
   remarks?: string[];
 }

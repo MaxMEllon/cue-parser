@@ -1,121 +1,118 @@
-import type { MSFTime } from './types.js';
+import type { HMSTime } from './types.js';
 
 /**
- * MSF (Minutes:Seconds:Frames) time format utilities
+ * HMS (Hours:Minutes:Seconds) time format utilities
  */
 
 /**
- * Parse MSF time string format "m:s:f" into MSFTime object
- * @param timeString - Time string in format "m:s:f" (e.g., "1:30:45")
- * @returns Parsed MSFTime object
+ * Parse HH:MM:SS time string format into HMSTime object
+ * @param timeString - Time string in format "h:m:s" (e.g., "1:30:45")
+ * @returns Parsed HMSTime object
  * @throws Error if format is invalid
  */
-export function parseMSFTime(timeString: string): MSFTime {
+export function parseHMSTime(timeString: string): HMSTime {
   const trimmed = timeString.trim();
   const parts = trimmed.split(':');
 
   if (parts.length !== 3) {
-    throw new Error(`Invalid MSF time format: "${timeString}". Expected format: "m:s:f"`);
+    throw new Error(`Invalid time format: "${timeString}". Expected format: "h:m:s"`);
   }
 
-  const [minutesStr, secondsStr, framesStr] = parts;
+  const [hoursStr, minutesStr, secondsStr] = parts;
 
-  if (!minutesStr || !secondsStr || !framesStr) {
-    throw new Error(`Invalid MSF time format: "${timeString}". Missing time components.`);
+  if (!hoursStr || !minutesStr || !secondsStr) {
+    throw new Error(`Invalid time format: "${timeString}". Missing time components.`);
   }
 
+  const hours = parseInt(hoursStr, 10);
   const minutes = parseInt(minutesStr, 10);
   const seconds = parseInt(secondsStr, 10);
-  const frames = parseInt(framesStr, 10);  if (isNaN(minutes) || isNaN(seconds) || isNaN(frames)) {
-    throw new Error(`Invalid MSF time format: "${timeString}". All parts must be numbers.`);
+
+  if (isNaN(hours) || isNaN(minutes) || isNaN(seconds)) {
+    throw new Error(`Invalid time format: "${timeString}". All parts must be numbers.`);
   }
 
-  if (minutes < 0 || seconds < 0 || frames < 0) {
-    throw new Error(`Invalid MSF time format: "${timeString}". All parts must be non-negative.`);
+  if (hours < 0 || minutes < 0 || seconds < 0) {
+    throw new Error(`Invalid time format: "${timeString}". All parts must be non-negative.`);
+  }
+
+  if (minutes >= 60) {
+    throw new Error(`Invalid time format: "${timeString}". Minutes must be less than 60.`);
   }
 
   if (seconds >= 60) {
-    throw new Error(`Invalid MSF time format: "${timeString}". Seconds must be less than 60.`);
+    throw new Error(`Invalid time format: "${timeString}". Seconds must be less than 60.`);
   }
 
-  if (frames >= 75) {
-    throw new Error(`Invalid MSF time format: "${timeString}". Frames must be less than 75.`);
-  }
-
-  return { minutes, seconds, frames };
+  return { hour: hours, minute: minutes, second: seconds };
 }
 
 /**
- * Convert MSFTime object to string format "m:s:f"
- * @param time - MSFTime object
+ * Convert HMSTime object to string format "h:m:s"
+ * @param time - HMSTime object
  * @param zeroPad - Whether to zero-pad values (default: true)
  * @returns Formatted time string
  */
-export function formatMSFTime(time: MSFTime, zeroPad: boolean = true): string {
+export function formatHMSTime(time: HMSTime, zeroPad: boolean = true): string {
   if (zeroPad) {
-    return `${time.minutes.toString().padStart(2, '0')}:${time.seconds.toString().padStart(2, '0')}:${time.frames.toString().padStart(2, '0')}`;
+    return `${time.hour.toString().padStart(2, '0')}:${time.minute.toString().padStart(2, '0')}:${time.second.toString().padStart(2, '0')}`;
   } else {
-    return `${time.minutes}:${time.seconds}:${time.frames}`;
+    return `${time.hour}:${time.minute}:${time.second}`;
   }
 }
 
 /**
- * Convert MSFTime to total seconds (including fractional frames)
- * @param time - MSFTime object
- * @returns Total time in seconds as floating point number
+ * Convert HMSTime to total seconds
+ * @param time - HMSTime object
+ * @returns Total time in seconds
  */
-export function msfToSeconds(time: MSFTime): number {
-  return time.minutes * 60 + time.seconds + time.frames / 75;
+export function hmsToSeconds(time: HMSTime): number {
+  return time.hour * 3600 + time.minute * 60 + time.second;
 }
 
 /**
- * Convert seconds to MSFTime
+ * Convert seconds to HMSTime
  * @param seconds - Time in seconds
- * @returns MSFTime object
+ * @returns HMSTime object
  */
-export function secondsToMSF(seconds: number): MSFTime {
-  const totalFrames = Math.round(seconds * 75);
-  const minutes = Math.floor(totalFrames / (75 * 60));
-  const remainingFrames = totalFrames % (75 * 60);
-  const secs = Math.floor(remainingFrames / 75);
-  const frames = remainingFrames % 75;
+export function secondsToHMS(seconds: number): HMSTime {
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const remainingSeconds = totalSeconds % 3600;
+  const mins = Math.floor(remainingSeconds / 60);
+  const secs = remainingSeconds % 60;
 
-  return { minutes, seconds: secs, frames };
+  return { hour: hours, minute: mins, second: secs };
 }
 
 /**
- * Convert MSFTime to total frames
- * @param time - MSFTime object
- * @returns Total frames
+ * Convert HMSTime to total seconds (alias for hmsToSeconds)
+ * @param time - HMSTime object
+ * @returns Total seconds
  */
-export function msfToFrames(time: MSFTime): number {
-  return time.minutes * 60 * 75 + time.seconds * 75 + time.frames;
+export function msfToFrames(time: HMSTime): number {
+  return hmsToSeconds(time);
 }
 
 /**
- * Convert total frames to MSFTime
- * @param totalFrames - Total frames
- * @returns MSFTime object
+ * Convert total seconds to HMSTime (alias for secondsToHMS)
+ * @param totalSeconds - Total seconds
+ * @returns HMSTime object
  */
-export function framesToMSF(totalFrames: number): MSFTime {
-  const minutes = Math.floor(totalFrames / (75 * 60));
-  const remainingFrames = totalFrames % (75 * 60);
-  const seconds = Math.floor(remainingFrames / 75);
-  const frames = remainingFrames % 75;
-
-  return { minutes, seconds, frames };
+export function framesToMSF(totalSeconds: number): HMSTime {
+  return secondsToHMS(totalSeconds);
 }
 
 /**
- * Add two MSFTime objects
+ * Add two HMSTime objects
  * @param time1 - First time
  * @param time2 - Second time
  * @returns Sum of the two times
  */
-export function addMSFTime(time1: MSFTime, time2: MSFTime): MSFTime {
-  const frames1 = msfToFrames(time1);
-  const frames2 = msfToFrames(time2);
-  return framesToMSF(frames1 + frames2);
+export function addHMSTime(time1: HMSTime, time2: HMSTime): HMSTime {
+  const seconds1 = hmsToSeconds(time1);
+  const seconds2 = hmsToSeconds(time2);
+  return secondsToHMS(seconds1 + seconds2);
 }
 
 /**
@@ -125,28 +122,28 @@ export function addMSFTime(time1: MSFTime, time2: MSFTime): MSFTime {
  * @returns Difference (time1 - time2)
  * @throws Error if result would be negative
  */
-export function subtractMSFTime(time1: MSFTime, time2: MSFTime): MSFTime {
-  const frames1 = msfToFrames(time1);
-  const frames2 = msfToFrames(time2);
+export function subtractHMSTime(time1: HMSTime, time2: HMSTime): HMSTime {
+  const seconds1 = hmsToSeconds(time1);
+  const seconds2 = hmsToSeconds(time2);
 
-  if (frames1 < frames2) {
+  if (seconds1 < seconds2) {
     throw new Error('Cannot subtract: result would be negative');
   }
 
-  return framesToMSF(frames1 - frames2);
+  return secondsToHMS(seconds1 - seconds2);
 }
 
 /**
- * Compare two MSFTime objects
+ * Compare two HMSTime objects
  * @param time1 - First time
  * @param time2 - Second time
  * @returns -1 if time1 < time2, 0 if equal, 1 if time1 > time2
  */
-export function compareMSFTime(time1: MSFTime, time2: MSFTime): -1 | 0 | 1 {
-  const frames1 = msfToFrames(time1);
-  const frames2 = msfToFrames(time2);
+export function compareHMSTime(time1: HMSTime, time2: HMSTime): -1 | 0 | 1 {
+  const seconds1 = hmsToSeconds(time1);
+  const seconds2 = hmsToSeconds(time2);
 
-  if (frames1 < frames2) return -1;
-  if (frames1 > frames2) return 1;
+  if (seconds1 < seconds2) return -1;
+  if (seconds1 > seconds2) return 1;
   return 0;
 }

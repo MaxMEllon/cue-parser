@@ -2,6 +2,8 @@
 
 A TypeScript library for parsing CUE sheet files according to the [CUE Sheet specification](https://wyday.com/cuesharp/specification.php).
 
+🌐 **[Live Demo](https://maxmellon.github.io/cue-parser/)** - Try the CUE parser online!
+
 ## Features
 
 - 🎵 Complete CUE sheet parsing support
@@ -183,16 +185,16 @@ if (result.warnings.length > 0) {
 ### Working with MSF Time Format
 
 ```typescript
-import { parseMSFTime, formatMSFTime, msfToSeconds } from 'cue-parser';
+import { parseHMSTime, formatHMSTime, hmsToSeconds } from 'cue-parser';
 
 // Parse MSF time string
-const time = parseMSFTime('1:30:45'); // { minutes: 1, seconds: 30, frames: 45 }
+const time = parseHMSTime('1:30:45'); // { hour: 1, minute: 30, second: 45 }
 
 // Format MSF time back to string
-const timeStr = formatMSFTime(time); // "01:30:45"
+const timeStr = formatHMSTime(time); // "01:30:45"
 
 // Convert to seconds
-const totalSeconds = msfToSeconds(time); // 90.6 seconds
+const totalSeconds = hmsToSeconds(time); // 5445 seconds
 ```
 
 ### Serializing CUE Sheets
@@ -307,17 +309,17 @@ interface MSFTime {
 #### `parseCueSheet(content: string): ParseResult`
 Parses a CUE sheet from string content.
 
-#### `parseMSFTime(timeString: string): MSFTime`
-Parses an MSF time string (e.g., "1:30:45") into an MSFTime object.
+#### `parseHMSTime(timeString: string): HMSTime`
+Parses an HMS time string (e.g., "1:30:45") into an HMSTime object.
 
-#### `formatMSFTime(time: MSFTime, zeroPad?: boolean): string`
-Formats an MSFTime object back to string format.
+#### `formatHMSTime(time: HMSTime, zeroPad?: boolean): string`
+Formats an HMSTime object back to string format.
 
-#### `msfToSeconds(time: MSFTime): number`
-Converts MSF time to total seconds.
+#### `hmsToSeconds(time: HMSTime): number`
+Converts HMS time to total seconds.
 
-#### `secondsToMSF(seconds: number): MSFTime`
-Converts seconds to MSF time format.
+#### `secondsToHMS(seconds: number): HMSTime`
+Converts seconds to HMS time format.
 
 #### `serializeCueSheet(cueSheet: CueSheet): string`
 Serializes a CueSheet object back to CUE sheet format string.

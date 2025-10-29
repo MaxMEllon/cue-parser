@@ -2,7 +2,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { parseCueSheet, formatMSFTime, msfToSeconds, serializeCueSheet, formatCueSheet, createMinimalCueSheet } from '../dist/src/index.js';
+import { parseCueSheet, formatHMSTime, hmsToSeconds, serializeCueSheet, formatCueSheet, createMinimalCueSheet, serializeYouTubeTimeline } from '../dist/src/index.js';
 
 /**
  * CUE Parser CLI
@@ -24,6 +24,7 @@ Options:
   -q, --quiet      Only show errors
   --validate       Only validate, don't output parsed content
   --stats          Show parsing statistics
+  --youtube        Output YouTube timeline format
 
 Examples:
   cue-parser album.cue
@@ -32,6 +33,7 @@ Examples:
   cue-parser album.cue --cue --minimal
   cue-parser album.cue --validate
   cue-parser album.cue --stats
+  cue-parser album.cue --youtube
 `);
 }
 
@@ -46,14 +48,21 @@ function showVersion() {
 
 function formatTime(time) {
   if (!time) return 'N/A';
-  const timeStr = formatMSFTime(time);
+  const timeStr = formatHMSTime(time);
   const seconds = msfToSeconds(time);
   return `${timeStr} (${seconds.toFixed(2)}s)`;
 }
 
-function displayCueSheet(cueSheet, options = {}) {
+function displayYouTubeTimeline(cueSheet) {
+  console.log(serializeYouTubeTimeline(cueSheet));
+}function displayCueSheet(cueSheet, options = {}) {
   if (options.json) {
     console.log(JSON.stringify(cueSheet, null, 2));
+    return;
+  }
+
+  if (options.youtube) {
+    displayYouTubeTimeline(cueSheet);
     return;
   }
 
@@ -201,7 +210,8 @@ async function main() {
     minimal: args.includes('--minimal'),
     quiet: args.includes('-q') || args.includes('--quiet'),
     validate: args.includes('--validate'),
-    stats: args.includes('--stats')
+    stats: args.includes('--stats'),
+    youtube: args.includes('--youtube')
   };
 
   // Find the file path (first non-option argument)
