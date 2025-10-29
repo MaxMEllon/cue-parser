@@ -5,7 +5,7 @@ const inter = Inter({ subsets: ['latin'] })
 
 export const metadata = {
   title: 'CUE Parser - オンライン CUE シートパーサー & バリデーター',
-  description: 'CUE シートファイルをオンラインで解析、検証、フォーマットできます。CD-TEXT、MSF時間形式、複数のオーディオ形式に対応。',
+  description: 'CUE シートファイルをオンラインで解析、検証、フォーマットできます。',
   keywords: ['CUE', 'parser', 'CD-TEXT', 'audio', 'rekordbox', 'DJ', 'CUEシート', 'パーサー'],
 }
 
