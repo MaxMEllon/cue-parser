@@ -36,14 +36,14 @@ export default function CueParser() {
   const [isLoading, setIsLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
 
-  const handleParse = (content?: string) => {
+  const handleParse = useCallback((content?: string) => {
     const cueContent = content || input;
     if (!cueContent.trim()) return;
 
     const parseResult = parseCueSheet(cueContent);
     setResult(parseResult);
     setActiveTab('serialized');
-  };
+  }, [input]);
 
   const handleLoadSample = () => {
     setInput(sampleCue);
@@ -87,6 +87,36 @@ export default function CueParser() {
     }
   };
 
+  const handleDeleteTrack = (trackIndex: number) => {
+    if (!result?.cueSheet) return;
+
+    const updatedTracks = result.cueSheet.tracks.filter((_, index) => index !== trackIndex);
+
+    // If no tracks remain, clear the result
+    if (updatedTracks.length === 0) {
+      setResult(null);
+      return;
+    }
+
+    // Renumber tracks sequentially starting from 1
+    const renumberedTracks = updatedTracks.map((track, index) => ({
+      ...track,
+      number: index + 1
+    }));
+
+    const updatedCueSheet = {
+      ...result.cueSheet,
+      tracks: renumberedTracks
+    };
+
+    const updatedResult = {
+      ...result,
+      cueSheet: updatedCueSheet
+    };
+
+    setResult(updatedResult);
+  };
+
   const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
     // Handle rejected files
     if (rejectedFiles.length > 0) {
@@ -122,7 +152,7 @@ export default function CueParser() {
       setIsLoading(false);
     };
     reader.readAsText(file, 'utf-8');
-  }, []);
+  }, [handleParse]);
 
   const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
     onDrop,
@@ -197,16 +227,25 @@ export default function CueParser() {
                     </span>
                     <span className="text-sm text-gray-500">{track.mode}</span>
                   </div>
-                  {track.flags && track.flags.length > 0 && (
-                    <div className="flex space-x-1">
-                      {track.flags.map((flag, i) => (
-                        <span key={i} className="bg-yellow-100 text-yellow-800 text-xs px-2 py-1 rounded">
-                          {flag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  <button
+                    onClick={() => handleDeleteTrack(index)}
+                    className="text-red-600 hover:text-red-800 hover:bg-red-50 p-1 rounded transition-colors"
+                    title="このトラックを削除"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
                 </div>
+                {track.flags && track.flags.length > 0 && (
+                  <div className="flex space-x-1 mb-3">
+                    {track.flags.map((flag, i) => (
+                      <span key={i} className="bg-yellow-100 text-yellow-800 text-xs px-2 py-1 rounded">
+                        {flag}
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-3">
                   {track.title && (
@@ -290,7 +329,7 @@ export default function CueParser() {
         <div className="bg-white rounded-lg shadow-sm border lg:h-fit lg:sticky lg:top-6">
           <div className="p-6 border-b border-gray-200">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-medium text-gray-900">CUE シート入力</h2>
+              <h2 className="text-lg font-medium text-gray-900">Rekordbox CUE シート入力</h2>
               <div className="flex space-x-2">
                 <button
                   onClick={handleLoadSample}
