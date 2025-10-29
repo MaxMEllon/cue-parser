@@ -44,6 +44,7 @@ export type {
 export {
   parseHMSTime,
   formatHMSTime,
+  formatCueTime,
   hmsToSeconds,
   secondsToHMS,
   msfToFrames,

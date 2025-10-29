@@ -59,6 +59,7 @@ export default function CueParser() {
   const handleDownloadCue = () => {
     if (!result?.cueSheet) return;
 
+    // serializeCueSheet automatically omits FILE fields
     const serializedCue = serializeCueSheet(result.cueSheet);
     const blob = new Blob([serializedCue], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);

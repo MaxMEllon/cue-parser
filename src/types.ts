@@ -79,6 +79,7 @@ export interface Track {
 export interface CueGlobal {
   catalog?: string;  // 13 digits
   cdTextFile?: string;
+  file?: FileInfo;   // Global FILE command
   title?: string;
   performer?: string;
   songwriter?: string;

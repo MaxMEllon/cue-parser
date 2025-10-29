@@ -1,5 +1,5 @@
 import type { CueSheet, CueGlobal, Track, TrackIndex } from './types.js';
-import { formatHMSTime } from './utils.js';
+import { formatCueTime } from './utils.js';
 
 /**
  * CUE Sheet serializer - converts parsed CueSheet objects back to CUE format
@@ -43,6 +43,16 @@ function serializeGlobal(global: CueGlobal, lines: string[]): void {
     lines.push(`CDTEXTFILE "${global.cdTextFile}"`);
   }
 
+  // Add global FILE
+  if (global.file) {
+    const formatStr = global.file.format ? ` ${global.file.format}` : '';
+    if (global.file.filename.includes(' ') || global.file.filename.includes('"')) {
+      lines.push(`FILE "${escapeString(global.file.filename)}"${formatStr}`);
+    } else {
+      lines.push(`FILE ${global.file.filename}${formatStr}`);
+    }
+  }
+
   // Add CD-TEXT fields
   if (global.title) {
     lines.push(`TITLE "${escapeString(global.title)}"`);
@@ -82,25 +92,12 @@ function serializeGlobal(global: CueGlobal, lines: string[]): void {
 }
 
 /**
- * Serialize tracks with optimized FILE handling
+ * Serialize tracks without FILE fields
  * @param tracks - Array of tracks
  * @param lines - Array to append lines to
  */
 function serializeTracksOptimized(tracks: Track[], lines: string[]): void {
-  let lastFile: string | undefined = undefined;
-
   tracks.forEach(track => {
-    // Only output FILE if it's different from the last one
-    if (track.file && track.file.filename !== lastFile) {
-      const formatStr = track.file.format ? ` ${track.file.format}` : '';
-      if (track.file.filename.includes(' ') || track.file.filename.includes('"')) {
-        lines.push(`FILE "${escapeString(track.file.filename)}"${formatStr}`);
-      } else {
-        lines.push(`FILE ${track.file.filename}${formatStr}`);
-      }
-      lastFile = track.file.filename;
-    }
-
     serializeTrackContent(track, lines);
   });
 }
@@ -144,15 +141,7 @@ function serializeTrackContent(track: Track, lines: string[]): void {
     lines.push(`\t\t\tISRC ${track.isrc}`);
   }
 
-  // Add file if present (after CD-TEXT fields)
-  if (track.file) {
-    const formatStr = track.file.format ? ` ${track.file.format}` : '';
-    if (track.file.filename.includes(' ') || track.file.filename.includes('"')) {
-      lines.push(`\t\t\tFILE "${escapeString(track.file.filename)}"${formatStr}`);
-    } else {
-      lines.push(`\t\t\tFILE ${track.file.filename}${formatStr}`);
-    }
-  }
+  // FILE field is omitted in serialization
 
   // Add flags
   if (track.flags && track.flags.length > 0) {
@@ -161,7 +150,7 @@ function serializeTrackContent(track: Track, lines: string[]): void {
 
   // Add pregap
   if (track.pregap) {
-    lines.push(`\t\t\tPREGAP ${formatHMSTime(track.pregap)}`);
+    lines.push(`\t\t\tPREGAP ${formatCueTime(track.pregap)}`);
   }
 
   // Add indexes
@@ -169,13 +158,13 @@ function serializeTrackContent(track: Track, lines: string[]): void {
     // Sort indexes by number
     const sortedIndexes = [...track.indexes].sort((a, b) => a.number - b.number);
     sortedIndexes.forEach(index => {
-      lines.push(`\t\t\tINDEX ${index.number.toString().padStart(2, '0')} ${formatHMSTime(index.time)}`);
+      lines.push(`\t\t\tINDEX ${index.number.toString().padStart(2, '0')} ${formatCueTime(index.time)}`);
     });
   }
 
   // Add postgap
   if (track.postgap) {
-    lines.push(`\t\t\tPOSTGAP ${formatHMSTime(track.postgap)}`);
+    lines.push(`\t\t\tPOSTGAP ${formatCueTime(track.postgap)}`);
   }
 
   // Add track remarks
@@ -268,6 +257,16 @@ export function createMinimalCueSheet(cueSheet: CueSheet): string {
     lines.push(`PERFORMER "${escapeString(cueSheet.global.performer)}"`);
   }
 
+  // Add global FILE in minimal version too
+  if (cueSheet.global.file) {
+    const formatStr = cueSheet.global.file.format ? ` ${cueSheet.global.file.format}` : '';
+    if (cueSheet.global.file.filename.includes(' ') || cueSheet.global.file.filename.includes('"')) {
+      lines.push(`FILE "${escapeString(cueSheet.global.file.filename)}"${formatStr}`);
+    } else {
+      lines.push(`FILE ${cueSheet.global.file.filename}${formatStr}`);
+    }
+  }
+
   // Add tracks with minimal information
   cueSheet.tracks.forEach(track => {
     lines.push(`\t\tTRACK ${track.number.toString().padStart(2, '0')} ${track.mode}`);
@@ -276,17 +275,13 @@ export function createMinimalCueSheet(cueSheet: CueSheet): string {
       lines.push(`\t\t\tTITLE "${escapeString(track.title)}"`);
     }
 
-    // Add file inside track
-    if (track.file) {
-      const formatStr = track.file.format ? ` ${track.file.format}` : '';
-      lines.push(`\t\t\tFILE "${escapeString(track.file.filename)}"${formatStr}`);
-    }
+    // FILE field is omitted in minimal serialization
 
     // Only include INDEX 01 (main index)
     if (track.indexes) {
       const mainIndex = track.indexes.find(idx => idx.number === 1);
       if (mainIndex) {
-        lines.push(`\t\t\tINDEX 01 ${formatHMSTime(mainIndex.time)}`);
+        lines.push(`\t\t\tINDEX 01 ${formatCueTime(mainIndex.time)}`);
       }
     }
   });  return lines.join('\n') + '\n';

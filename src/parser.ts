@@ -221,16 +221,17 @@ export class CueParser {
       ...(parts.format ? { format: parts.format } : {})
     };
 
-    // Only set file if we're inside a track
+    // Set file at appropriate level
     if (this.currentTrack) {
-      this.currentTrack.file = fileInfo;
-    } else {
-      // Global FILE commands are ignored - each track must have its own FILE
+      // Track-level FILE is ignored in favor of global FILE
       this.warnings.push({
         line: lineNumber,
-        message: 'Global FILE commands are not recommended. Each TRACK should have its own FILE.',
+        message: 'Track-level FILE commands are ignored. Using global FILE instead.',
         rawLine: `FILE ${args}`
       });
+    } else {
+      // Store global FILE
+      this.global.file = fileInfo;
     }
   }
 

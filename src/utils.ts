@@ -62,6 +62,20 @@ export function formatHMSTime(time: HMSTime, zeroPad: boolean = true): string {
 }
 
 /**
+ * Convert HMSTime object to CUE format string "MM:SS:FF"
+ * In CUE format, we treat our HMSTime as Minutes:Seconds:Frames for compatibility
+ * @param time - HMSTime object
+ * @returns CUE format time string (MM:SS:FF)
+ */
+export function formatCueTime(time: HMSTime): string {
+  // For CUE format, map hour->minutes, minute->seconds, second->frames
+  const minutes = time.hour * 60 + time.minute;
+  const seconds = time.second;
+  const frames = 0;
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}:${frames.toString().padStart(2, '0')}`;
+}
+
+/**
  * Convert HMSTime to total seconds
  * @param time - HMSTime object
  * @returns Total time in seconds
