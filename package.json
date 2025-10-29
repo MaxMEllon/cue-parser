@@ -16,8 +16,8 @@
     "dev": "tsc --watch",
     "cli": "node bin/index.js"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "MaxMEllon",
+  "license": "MIT",
   "description": "A TypeScript library for parsing CUE sheet files with CLI support",
   "keywords": [
     "cue",
