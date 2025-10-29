@@ -36,15 +36,19 @@ export default function CueParser() {
   const [isLoading, setIsLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
 
-  const handleParse = () => {
-    const parseResult = parseCueSheet(input);
+  const handleParse = (content?: string) => {
+    const cueContent = content || input;
+    if (!cueContent.trim()) return;
+
+    const parseResult = parseCueSheet(cueContent);
     setResult(parseResult);
     setActiveTab('serialized');
   };
 
   const handleLoadSample = () => {
     setInput(sampleCue);
-    setResult(null);
+    // サンプル読み込み後に自動的に解析を実行
+    handleParse(sampleCue);
   };
 
   const handleClear = () => {
@@ -108,8 +112,9 @@ export default function CueParser() {
     reader.onload = (e) => {
       const content = e.target?.result as string;
       setInput(content);
-      setResult(null);
       setIsLoading(false);
+      // ファイル読み込み後に自動的に解析を実行
+      handleParse(content);
     };
     reader.onerror = () => {
       alert('ファイルの読み込みエラー。有効なテキストファイルであることを確認してください。');
@@ -315,6 +320,15 @@ export default function CueParser() {
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onPaste={(e) => {
+                  // ペースト後に少し遅延させて自動解析を実行
+                  setTimeout(() => {
+                    const pastedContent = e.currentTarget.value;
+                    if (pastedContent.trim()) {
+                      handleParse(pastedContent);
+                    }
+                  }, 100);
+                }}
                 className={`w-full h-full p-4 resize-none outline-none font-mono text-sm transition-opacity ${
                   isDragActive ? 'opacity-30 pointer-events-none' : 'bg-transparent'
                 }`}
@@ -380,10 +394,11 @@ export default function CueParser() {
         </div>
           <div className="p-6">
             <button
-              onClick={handleParse}
-              className="w-full bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 font-medium"
+              onClick={() => handleParse()}
+              disabled={!input.trim()}
+              className="w-full bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              CUEシートを解析
+              CUEシートを解析 (ファイル/ペースト時は自動実行)
             </button>
           </div>
         </div>
