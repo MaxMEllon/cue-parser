@@ -1,0 +1,4 @@
+TITLE "Invalid CUE"
+TRACK 01 INVALID_MODE
+	INDEX 01 invalid:time
+CATALOG 123

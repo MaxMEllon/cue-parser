@@ -1,0 +1,41 @@
+{
+  "name": "cue-parser",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "bin": {
+    "cue-parser": "./bin/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "dev": "tsc --watch",
+    "cli": "node bin/index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "A TypeScript library for parsing CUE sheet files with CLI support",
+  "keywords": [
+    "cue",
+    "cue-sheet",
+    "parser",
+    "audio",
+    "cd",
+    "typescript",
+    "cli"
+  ],
+  "files": [
+    "dist/",
+    "bin/"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.19.24",
+    "typescript": "^5.9.3",
+    "vitest": "^2.0.0",
+    "@vitest/ui": "^2.0.0"
+  }
+}
