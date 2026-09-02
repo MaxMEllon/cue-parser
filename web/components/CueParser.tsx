@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { parseCueSheet, serializeCueSheet, serializeYouTubeTimeline, formatHMSTime } from 'cue-parser';
 import type { ParseResult, CueSheet } from 'cue-parser';
+import { applyOffsetToCueSheet, formatOffset, hasClampedTracks, parseOffsetInput } from '@/utils/offset';
+import { countMissingFields, isBlank } from '@/utils/validation';
 
 const sampleCue = `REM GENRE "Electronic"
 REM DATE "2023"
@@ -35,6 +37,78 @@ export default function CueParser() {
   const [activeTab, setActiveTab] = useState<'parsed' | 'serialized' | 'youtube' | 'json'>('serialized');
   const [isLoading, setIsLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [offsetSeconds, setOffsetSeconds] = useState(0);
+  const [offsetText, setOffsetText] = useState(formatOffset(0));
+  const [offsetError, setOffsetError] = useState(false);
+
+  // オフセットを適用したCUEシート。全ての出力(解析データ/CUE/YouTube/JSON)はこれを参照する
+  const offsetCueSheet = useMemo(
+    () => (result?.cueSheet ? applyOffsetToCueSheet(result.cueSheet, offsetSeconds) : undefined),
+    [result, offsetSeconds]
+  );
+
+  const isOffsetClamped = useMemo(
+    () => (result?.cueSheet ? hasClampedTracks(result.cueSheet, offsetSeconds) : false),
+    [result, offsetSeconds]
+  );
+
+  // タイトル・アーティストの未入力数。0 より大きい場合はユーザーに編集を促す
+  const missingFieldCount = useMemo(() => countMissingFields(result?.cueSheet), [result]);
+
+  // 編集はオフセット適用前の元データに対して行う
+  const updateCueSheet = (updater: (cueSheet: CueSheet) => CueSheet) => {
+    setResult((prev) => (prev?.cueSheet ? { ...prev, cueSheet: updater(prev.cueSheet) } : prev));
+  };
+
+  const handleGlobalFieldChange = (field: 'title' | 'performer', value: string) => {
+    updateCueSheet((cueSheet) => ({
+      ...cueSheet,
+      // 空白のみの入力は未入力として扱う(CUE出力に空の項目を残さない)
+      global: { ...cueSheet.global, [field]: value.trim() === '' ? '' : value },
+    }));
+  };
+
+  const handleTrackFieldChange = (trackIndex: number, field: 'title' | 'performer', value: string) => {
+    updateCueSheet((cueSheet) => ({
+      ...cueSheet,
+      tracks: cueSheet.tracks.map((track, index) =>
+        index === trackIndex ? { ...track, [field]: value.trim() === '' ? '' : value } : track
+      ),
+    }));
+  };
+
+  // 未入力のフォームは赤枠で表示する
+  const editableFieldClass = (needsEdit: boolean) =>
+    `w-full px-2 py-1 text-sm border rounded-md focus:outline-none focus:ring-2 ${
+      needsEdit
+        ? 'border-red-500 bg-red-50 text-red-900 placeholder-red-400 focus:ring-red-500'
+        : 'border-gray-300 focus:ring-indigo-500'
+    }`;
+
+  const applyOffsetSeconds = (next: number) => {
+    setOffsetSeconds(next);
+    setOffsetText(formatOffset(next));
+    setOffsetError(false);
+  };
+
+  const handleOffsetTextChange = (value: string) => {
+    setOffsetText(value);
+
+    const parsed = parseOffsetInput(value);
+    if (parsed === null) {
+      setOffsetError(true);
+      return;
+    }
+
+    setOffsetError(false);
+    setOffsetSeconds(parsed);
+  };
+
+  // 入力途中の表記("90" など)をフォーカスアウト時に "+HH:MM:SS" へ正規化する
+  const handleOffsetBlur = () => {
+    setOffsetText(formatOffset(offsetSeconds));
+    setOffsetError(false);
+  };
 
   const handleParse = useCallback((content?: string) => {
     const cueContent = content || input;
@@ -54,19 +128,20 @@ export default function CueParser() {
   const handleClear = () => {
     setInput('');
     setResult(null);
+    applyOffsetSeconds(0);
   };
 
   const handleDownloadCue = () => {
-    if (!result?.cueSheet) return;
+    if (!offsetCueSheet) return;
 
     // serializeCueSheet automatically omits FILE fields
-    const serializedCue = serializeCueSheet(result.cueSheet);
+    const serializedCue = serializeCueSheet(offsetCueSheet);
     const blob = new Blob([serializedCue], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
 
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${result.cueSheet.global.title || 'cuesheet'}.cue`;
+    link.download = `${offsetCueSheet.global.title || 'cuesheet'}.cue`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -74,10 +149,10 @@ export default function CueParser() {
   };
 
   const handleCopyYouTube = async () => {
-    if (!result?.cueSheet) return;
+    if (!offsetCueSheet) return;
 
     try {
-      const youtubeContent = serializeYouTubeTimeline(result.cueSheet);
+      const youtubeContent = serializeYouTubeTimeline(offsetCueSheet);
       await navigator.clipboard.writeText(youtubeContent);
       setCopyStatus('copied');
       setTimeout(() => setCopyStatus('idle'), 2000);
@@ -184,18 +259,34 @@ export default function CueParser() {
             グローバル情報
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {cueSheet.global.title && (
-              <div>
-                <dt className="text-sm font-medium text-gray-500">タイトル</dt>
-                <dd className="text-gray-900">{cueSheet.global.title}</dd>
-              </div>
-            )}
-            {cueSheet.global.performer && (
-              <div>
-                <dt className="text-sm font-medium text-gray-500">アーティスト</dt>
-                <dd className="text-gray-900">{cueSheet.global.performer}</dd>
-              </div>
-            )}
+            <div>
+              <dt className="text-sm font-medium text-gray-500 mb-1">タイトル</dt>
+              <dd>
+                <input
+                  type="text"
+                  value={cueSheet.global.title ?? ''}
+                  onChange={(e) => handleGlobalFieldChange('title', e.target.value)}
+                  placeholder="未入力 - タイトルを入力してください"
+                  aria-label="タイトル"
+                  aria-invalid={isBlank(cueSheet.global.title)}
+                  className={editableFieldClass(isBlank(cueSheet.global.title))}
+                />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500 mb-1">アーティスト</dt>
+              <dd>
+                <input
+                  type="text"
+                  value={cueSheet.global.performer ?? ''}
+                  onChange={(e) => handleGlobalFieldChange('performer', e.target.value)}
+                  placeholder="未入力 - アーティストを入力してください"
+                  aria-label="アーティスト"
+                  aria-invalid={isBlank(cueSheet.global.performer)}
+                  className={editableFieldClass(isBlank(cueSheet.global.performer))}
+                />
+              </dd>
+            </div>
             {cueSheet.global.catalog && (
               <div>
                 <dt className="text-sm font-medium text-gray-500">カタログ</dt>
@@ -248,18 +339,34 @@ export default function CueParser() {
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-3">
-                  {track.title && (
-                    <div>
-                      <dt className="text-sm font-medium text-gray-500">Title</dt>
-                      <dd className="text-gray-900">{track.title}</dd>
-                    </div>
-                  )}
-                  {track.performer && (
-                    <div>
-                      <dt className="text-sm font-medium text-gray-500">Performer</dt>
-                      <dd className="text-gray-900">{track.performer}</dd>
-                    </div>
-                  )}
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500 mb-1">Title</dt>
+                    <dd>
+                      <input
+                        type="text"
+                        value={track.title ?? ''}
+                        onChange={(e) => handleTrackFieldChange(index, 'title', e.target.value)}
+                        placeholder="未入力 - タイトルを入力してください"
+                        aria-label={`トラック ${track.number} のタイトル`}
+                        aria-invalid={isBlank(track.title)}
+                        className={editableFieldClass(isBlank(track.title))}
+                      />
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500 mb-1">Performer</dt>
+                    <dd>
+                      <input
+                        type="text"
+                        value={track.performer ?? ''}
+                        onChange={(e) => handleTrackFieldChange(index, 'performer', e.target.value)}
+                        placeholder="未入力 - アーティストを入力してください"
+                        aria-label={`トラック ${track.number} のアーティスト`}
+                        aria-invalid={isBlank(track.performer)}
+                        className={editableFieldClass(isBlank(track.performer))}
+                      />
+                    </dd>
+                  </div>
                   {track.isrc && (
                     <div>
                       <dt className="text-sm font-medium text-gray-500">ISRC</dt>
@@ -465,8 +572,111 @@ export default function CueParser() {
           )}
 
           {/* Results Tabs */}
-          {result.cueSheet && (
+          {offsetCueSheet && (
             <div className="bg-white rounded-lg shadow-sm border">
+              {/* 未入力項目の通知 */}
+              {missingFieldCount > 0 && (
+                <div className="border-b border-red-200 bg-red-50 rounded-t-lg p-4 xl:p-6">
+                  <div className="flex items-start gap-3">
+                    <span className="text-lg leading-none" aria-hidden="true">⚠️</span>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-red-800">
+                        タイトル・アーティストが未入力の項目が {missingFieldCount} 件あります
+                      </p>
+                      <p className="mt-1 text-xs text-red-700">
+                        「解析データ」タブの赤枠のフォームを編集してください。編集内容は CUE / YouTube / JSON の全ての出力に反映されます。
+                      </p>
+                      {/* 解析データタブ表示中は非表示にするが、レイアウトシフトを避けるため領域は確保する */}
+                      <button
+                        onClick={() => setActiveTab('parsed')}
+                        className={`mt-2 px-3 py-1 text-xs font-medium text-red-700 bg-white border border-red-300 rounded-md hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                          activeTab === 'parsed' ? 'invisible' : ''
+                        }`}
+                        aria-hidden={activeTab === 'parsed'}
+                        tabIndex={activeTab === 'parsed' ? -1 : 0}
+                      >
+                        解析データタブを開く
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Time Offset - 全ての出力に反映される */}
+              <div className={`border-b border-gray-200 bg-gray-50 p-4 xl:p-6 ${missingFieldCount > 0 ? '' : 'rounded-t-lg'}`}>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">時刻オフセット</div>
+                    <div className="text-xs text-gray-500">全ての出力に反映されます</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => applyOffsetSeconds(offsetSeconds - 10)}
+                      className="px-2 py-1 text-sm border border-gray-300 bg-white rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      title="10秒戻す"
+                    >
+                      -10s
+                    </button>
+                    <button
+                      onClick={() => applyOffsetSeconds(offsetSeconds - 1)}
+                      className="px-2 py-1 text-sm border border-gray-300 bg-white rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      title="1秒戻す"
+                    >
+                      -1s
+                    </button>
+                    <input
+                      type="text"
+                      inputMode="text"
+                      value={offsetText}
+                      onChange={(e) => handleOffsetTextChange(e.target.value)}
+                      onBlur={handleOffsetBlur}
+                      placeholder="+00:00:00"
+                      aria-label="時刻オフセット"
+                      className={`w-32 px-3 py-1 text-sm font-mono text-center border rounded-md focus:outline-none focus:ring-2 ${
+                        offsetError
+                          ? 'border-red-400 text-red-700 focus:ring-red-500'
+                          : 'border-gray-300 focus:ring-indigo-500'
+                      }`}
+                    />
+                    <button
+                      onClick={() => applyOffsetSeconds(offsetSeconds + 1)}
+                      className="px-2 py-1 text-sm border border-gray-300 bg-white rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      title="1秒進める"
+                    >
+                      +1s
+                    </button>
+                    <button
+                      onClick={() => applyOffsetSeconds(offsetSeconds + 10)}
+                      className="px-2 py-1 text-sm border border-gray-300 bg-white rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      title="10秒進める"
+                    >
+                      +10s
+                    </button>
+                    <button
+                      onClick={() => applyOffsetSeconds(0)}
+                      disabled={offsetSeconds === 0 && !offsetError}
+                      className="px-3 py-1 text-sm border border-gray-300 bg-white rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      リセット
+                    </button>
+                  </div>
+                </div>
+                {offsetError ? (
+                  <p className="mt-2 text-xs text-red-600">
+                    形式が正しくありません。「90」「1:30」「00:01:30」のように入力してください (先頭に - で巻き戻し)。
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-gray-500">
+                    「90」「1:30」「00:01:30」の形式で入力できます (先頭に - で巻き戻し)。
+                  </p>
+                )}
+                {isOffsetClamped && (
+                  <p className="mt-1 text-xs text-amber-600">
+                    先頭より前になるトラックは 00:00:00 に丸められています。
+                  </p>
+                )}
+              </div>
+
               <div className="border-b border-gray-200">
                 <nav className="flex space-x-6 lg:space-x-8 xl:space-x-12 px-4 xl:px-6 overflow-x-auto" aria-label="Tabs">
                   {[
@@ -487,13 +697,20 @@ export default function CueParser() {
                       <span>{tab.icon}</span>
                       <span className="hidden sm:inline">{tab.name}</span>
                       <span className="sm:hidden">{tab.shortName}</span>
+                      {tab.id === 'parsed' && missingFieldCount > 0 && (
+                        <span
+                          className="w-2 h-2 shrink-0 bg-red-500 rounded-full"
+                          title="未入力の項目があります"
+                          aria-label="未入力の項目があります"
+                        />
+                      )}
                     </button>
                   ))}
                 </nav>
               </div>
 
               <div className="p-4 xl:p-6">
-                {activeTab === 'parsed' && renderTrackInfo(result.cueSheet)}
+                {activeTab === 'parsed' && renderTrackInfo(offsetCueSheet)}
 
                 {activeTab === 'serialized' && (
                   <div>
@@ -511,7 +728,7 @@ export default function CueParser() {
                       </button>
                     </div>
                     <pre className="code-block text-xs xl:text-sm overflow-x-scroll">
-                      {serializeCueSheet(result.cueSheet)}
+                      {serializeCueSheet(offsetCueSheet)}
                     </pre>
                   </div>
                 )}
@@ -552,7 +769,7 @@ export default function CueParser() {
                       </button>
                     </div>
                     <pre className="code-block text-xs xl:text-sm overflow-x-auto">
-                      {serializeYouTubeTimeline(result.cueSheet)}
+                      {serializeYouTubeTimeline(offsetCueSheet)}
                     </pre>
                   </div>
                 )}
@@ -561,7 +778,7 @@ export default function CueParser() {
                   <div>
                     <h3 className="text-lg font-medium text-gray-900 mb-4">JSON表示</h3>
                     <pre className="code-block text-xs xl:text-sm overflow-x-auto">
-                      {JSON.stringify(result.cueSheet, null, 2)}
+                      {JSON.stringify(offsetCueSheet, null, 2)}
                     </pre>
                   </div>
                 )}
