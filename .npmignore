@@ -1,0 +1,56 @@
+# Development files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+# Source files (publish only compiled dist)
+src/
+tsconfig.json
+vitest.config.ts
+
+# Tests
+test/
+dist/test/
+*.test.ts
+*.spec.ts
+coverage/
+
+# Development dependencies
+node_modules/
+.vscode/
+.idea/
+
+# Examples and documentation (optional - you may want to include these)
+examples/
+
+# Web application (not part of the npm package)
+web/
+
+# Git and CI
+.git/
+.gitignore
+.github/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Build artifacts to exclude
+.next/
+out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Sample files
+*.cue
+REC-*.cue
+*.cue:Zone.Identifier
+
+# README and LICENSE are included by default
