@@ -60,55 +60,51 @@ describe('CUE Serializer', () => {
   });
 
   describe('FILE field positioning', () => {
-    it('should place FILE inside tracks, not at global level', () => {
-      // Create a test with multiple files
-      const multiFileCue: CueSheet = {
+    it('should place FILE at global level when specified', () => {
+      // Create a test with global FILE
+      const globalFileCue: CueSheet = {
         global: {
-          title: 'Multi-File Album'
+          title: 'Global File Album',
+          file: { filename: 'album.wav', format: 'WAVE' }
         },
         tracks: [
           {
             number: 1,
             mode: 'AUDIO',
             title: 'Track 1',
-            file: { filename: 'track1.wav', format: 'WAVE' },
             indexes: [{ number: 1, time: { hour: 0, minute: 0, second: 0 } }]
           },
           {
             number: 2,
             mode: 'AUDIO',
             title: 'Track 2',
-            file: { filename: 'track2.wav', format: 'WAVE' },
             indexes: [{ number: 1, time: { hour: 3, minute: 30, second: 0 } }]
           }
         ]
       };
 
-      const serialized = serializeCueSheet(multiFileCue);
+      const serialized = serializeCueSheet(globalFileCue);
 
-      // Check that FILE appears within track context
+      // Check that FILE appears at global level
       const lines = serialized.split('\n');
-      let trackFound = false;
-      let fileAfterTrack = false;
+      let globalFileFound = false;
+      let trackStarted = false;
 
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i]?.trim();
-        if (line?.startsWith('TRACK')) {
-          trackFound = true;
-          // Look for FILE in the lines following this TRACK
-          for (let j = i + 1; j < lines.length && !lines[j]?.trim().startsWith('TRACK'); j++) {
-            if (lines[j]?.trim().startsWith('FILE')) {
-              fileAfterTrack = true;
-              break;
-            }
-          }
-          if (fileAfterTrack) break;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('TRACK')) {
+          trackStarted = true;
+        }
+        if (trimmed.startsWith('FILE') && !trackStarted) {
+          globalFileFound = true;
+          expect(trimmed).toContain('album.wav');
         }
       }
 
-      expect(trackFound).toBe(true);
-      expect(fileAfterTrack).toBe(true);
-    });    it('should use tab indentation for rekordbox compatibility', () => {
+      expect(globalFileFound).toBe(true);
+    });
+
+    it('should use tab indentation for rekordbox compatibility', () => {
       const serialized = serializeCueSheet(sampleCueSheet);
       const lines = serialized.split('\n');
 

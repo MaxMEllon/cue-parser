@@ -32,13 +32,15 @@ describe('CUE Parser', () => {
       expect(firstTrack.indexes).toHaveLength(2);
     });
 
-    it('should handle warnings for global FILE commands', () => {
-      const samplePath = join(__dirname, '../examples/sample.cue');
-      const content = readFileSync(samplePath, 'utf-8');
+    it('should parse global FILE commands correctly', () => {
+      const content = `FILE "audio.wav" WAVE
+TRACK 01 AUDIO
+  INDEX 01 00:00:00`;
       const result = parseCueSheet(content);
 
-      expect(result.warnings).toHaveLength(1);
-      expect(result.warnings[0]?.message).toContain('Global FILE commands are not recommended');
+      expect(result.cueSheet?.global.file?.filename).toBe('audio.wav');
+      expect(result.cueSheet?.global.file?.format).toBe('WAVE');
+      expect(result.warnings).toHaveLength(0);
     });
 
     it('should parse complex rekordbox CUE files', () => {
