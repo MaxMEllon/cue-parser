@@ -270,11 +270,18 @@ function compile(gl: WebGLRenderingContext, type: number, source: string): WebGL
   return shader;
 }
 
+/** プログラムと、そこで使うユニフォームの位置。位置はリンク時に 1 度だけ引く */
+interface LinkedProgram {
+  program: WebGLProgram;
+  uniforms: Record<string, WebGLUniformLocation | null>;
+}
+
 function link(
   gl: WebGLRenderingContext,
   vertexSource: string,
-  fragmentSource: string
-): WebGLProgram | null {
+  fragmentSource: string,
+  uniformNames: string[]
+): LinkedProgram | null {
   const vertex = compile(gl, gl.VERTEX_SHADER, vertexSource);
   const fragment = compile(gl, gl.FRAGMENT_SHADER, fragmentSource);
   if (!vertex || !fragment) return null;
@@ -293,7 +300,15 @@ function link(
     gl.deleteProgram(program);
     return null;
   }
-  return program;
+
+  // getUniformLocation は GPU プロセスへの同期問い合わせなので、描画のたびに引かない。
+  // ぼかしを掛けると 1 回の更新で 7 ドロー走るため、ここが効いてくる
+  const uniforms: Record<string, WebGLUniformLocation | null> = {};
+  for (const name of uniformNames) {
+    uniforms[name] = gl.getUniformLocation(program, name);
+  }
+
+  return { program, uniforms };
 }
 
 interface RenderTarget {
@@ -429,16 +444,32 @@ export function createBackgroundRenderer(): BackgroundRenderer {
 
   const filterSupport = detectFilterSupport();
 
-  let sampleProgram: WebGLProgram | null = null;
-  let blurProgram: WebGLProgram | null = null;
+  let sampleProgram: LinkedProgram | null = null;
+  let blurProgram: LinkedProgram | null = null;
   let buffer: WebGLBuffer | null = null;
   let sourceTexture: WebGLTexture | null = null;
   let targets: [RenderTarget, RenderTarget] | null = null;
   let uploadedImage: CanvasImageSource | null = null;
 
   const setupGl = (context: WebGLRenderingContext): boolean => {
-    sampleProgram = link(context, VERTEX_SHADER, SAMPLE_SHADER);
-    blurProgram = link(context, VERTEX_SHADER, BLUR_SHADER);
+    sampleProgram = link(context, VERTEX_SHADER, SAMPLE_SHADER, [
+      'uTex',
+      'uResolution',
+      'uUvScale',
+      'uUvOffset',
+      'uBrightness',
+      'uContrast',
+      'uSaturation',
+      'uHalftone',
+      'uCell',
+      'uFlipY',
+    ]);
+    blurProgram = link(context, VERTEX_SHADER, BLUR_SHADER, [
+      'uTex',
+      'uResolution',
+      'uDirection',
+      'uRadius',
+    ]);
     if (!sampleProgram || !blurProgram) return false;
 
     // 四角形ではなく画面を覆う三角形 1 枚。頂点が 1 つ少なく、対角の継ぎ目も出ない
@@ -451,8 +482,8 @@ export function createBackgroundRenderer(): BackgroundRenderer {
       context.STATIC_DRAW
     );
 
-    for (const program of [sampleProgram, blurProgram]) {
-      const position = context.getAttribLocation(program, 'aPosition');
+    for (const linked of [sampleProgram, blurProgram]) {
+      const position = context.getAttribLocation(linked.program, 'aPosition');
       context.enableVertexAttribArray(position);
       context.vertexAttribPointer(position, 2, context.FLOAT, false, 0, 0);
     }
@@ -494,22 +525,22 @@ export function createBackgroundRenderer(): BackgroundRenderer {
     settings: { brightness: number; contrast: number; saturation: number; halftone: boolean },
     flipY: boolean
   ): void => {
-    const program = sampleProgram!;
+    const { program, uniforms } = sampleProgram!;
     context.useProgram(program);
     context.viewport(0, 0, width, height);
 
     context.activeTexture(context.TEXTURE0);
     context.bindTexture(context.TEXTURE_2D, texture);
-    context.uniform1i(context.getUniformLocation(program, 'uTex'), 0);
-    context.uniform2f(context.getUniformLocation(program, 'uResolution'), width, height);
-    context.uniform2f(context.getUniformLocation(program, 'uUvScale'), uvScale[0], uvScale[1]);
-    context.uniform2f(context.getUniformLocation(program, 'uUvOffset'), uvOffset[0], uvOffset[1]);
-    context.uniform1f(context.getUniformLocation(program, 'uBrightness'), settings.brightness);
-    context.uniform1f(context.getUniformLocation(program, 'uContrast'), settings.contrast);
-    context.uniform1f(context.getUniformLocation(program, 'uSaturation'), settings.saturation);
-    context.uniform1f(context.getUniformLocation(program, 'uHalftone'), settings.halftone ? 1 : 0);
-    context.uniform1f(context.getUniformLocation(program, 'uCell'), HALFTONE_CELL);
-    context.uniform1f(context.getUniformLocation(program, 'uFlipY'), flipY ? 1 : 0);
+    context.uniform1i(uniforms.uTex, 0);
+    context.uniform2f(uniforms.uResolution, width, height);
+    context.uniform2f(uniforms.uUvScale, uvScale[0], uvScale[1]);
+    context.uniform2f(uniforms.uUvOffset, uvOffset[0], uvOffset[1]);
+    context.uniform1f(uniforms.uBrightness, settings.brightness);
+    context.uniform1f(uniforms.uContrast, settings.contrast);
+    context.uniform1f(uniforms.uSaturation, settings.saturation);
+    context.uniform1f(uniforms.uHalftone, settings.halftone ? 1 : 0);
+    context.uniform1f(uniforms.uCell, HALFTONE_CELL);
+    context.uniform1f(uniforms.uFlipY, flipY ? 1 : 0);
 
     context.drawArrays(context.TRIANGLES, 0, 3);
   };
@@ -520,20 +551,16 @@ export function createBackgroundRenderer(): BackgroundRenderer {
     horizontal: boolean,
     radius: number
   ): void => {
-    const program = blurProgram!;
+    const { program, uniforms } = blurProgram!;
     context.useProgram(program);
     context.viewport(0, 0, BLUR_WIDTH, BLUR_HEIGHT);
 
     context.activeTexture(context.TEXTURE0);
     context.bindTexture(context.TEXTURE_2D, texture);
-    context.uniform1i(context.getUniformLocation(program, 'uTex'), 0);
-    context.uniform2f(context.getUniformLocation(program, 'uResolution'), BLUR_WIDTH, BLUR_HEIGHT);
-    context.uniform2f(
-      context.getUniformLocation(program, 'uDirection'),
-      horizontal ? 1 : 0,
-      horizontal ? 0 : 1
-    );
-    context.uniform1f(context.getUniformLocation(program, 'uRadius'), radius);
+    context.uniform1i(uniforms.uTex, 0);
+    context.uniform2f(uniforms.uResolution, BLUR_WIDTH, BLUR_HEIGHT);
+    context.uniform2f(uniforms.uDirection, horizontal ? 1 : 0, horizontal ? 0 : 1);
+    context.uniform1f(uniforms.uRadius, radius);
 
     context.drawArrays(context.TRIANGLES, 0, 3);
   };
@@ -626,8 +653,8 @@ export function createBackgroundRenderer(): BackgroundRenderer {
 
     dispose() {
       if (!gl) return;
-      if (sampleProgram) gl.deleteProgram(sampleProgram);
-      if (blurProgram) gl.deleteProgram(blurProgram);
+      if (sampleProgram) gl.deleteProgram(sampleProgram.program);
+      if (blurProgram) gl.deleteProgram(blurProgram.program);
       if (buffer) gl.deleteBuffer(buffer);
       if (sourceTexture) gl.deleteTexture(sourceTexture);
       if (targets) {

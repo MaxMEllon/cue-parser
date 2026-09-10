@@ -2,7 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-/* melocil.de と同じ白黒の設計。色相を一切使わないので、区別は明度・字間・罫線で付ける。
+/* melocil.de と同じ白黒の設計。区別は基本的に明度・字間・罫線で付ける
+   (例外は未入力・エラーの赤 --danger だけ。ここだけは見落とされると困る)。
    背景は WebGL のハーフトーン(components/ShaderBackground.tsx)が動くが、
    前景の可読性が最優先なので、シェーダー側の輝度上限とベイルの二段で必ず暗く保つ。
    トークンは melocil.de-site/app/globals.css の写し。あちらを触ったらこちらも揃える。 */
@@ -22,6 +23,12 @@
   --panel: rgba(255, 255, 255, 0.035);
   --raised: rgba(255, 255, 255, 0.06);
   --sunken: rgba(0, 0, 0, 0.45);
+
+  /* 色相を使わない作法の唯一の例外。未入力・エラーだけは赤で示す。
+     見落とすと出力が壊れる箇所なので、明度差だけに頼らない */
+  --danger: #ff6a5f;
+  --danger-border: rgba(255, 106, 95, 0.55);
+  --danger-surface: rgba(255, 106, 95, 0.08);
 
   --font-sans: system-ui, -apple-system, 'Segoe UI', 'Noto Sans JP', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
@@ -285,6 +292,13 @@
     color: var(--fg);
   }
 
+  /* 入力欄の見出しの隣に置く小さい札。ID の入り切りなど */
+  .btn-xs {
+    padding: 0.1rem 0.4rem;
+    font-size: 0.625rem;
+    letter-spacing: 0.1em;
+  }
+
   .btn:disabled {
     opacity: 0.35;
     cursor: not-allowed;
@@ -316,12 +330,19 @@
     border-color: var(--fg);
   }
 
-  /* 未入力の欄。色相が使えないので、枠の明度を上げて左に太い棒を立てる */
+  /* 未入力の欄。枠を赤くして左に太い棒を立てる */
   .field[aria-invalid='true'],
   .field-invalid {
-    border-color: var(--border-strong);
-    border-left: 3px solid var(--fg);
-    background: var(--raised);
+    border-color: var(--danger-border);
+    border-left: 3px solid var(--danger);
+    background: var(--danger-surface);
+  }
+
+  /* ID モードで伏せ字を出しているとき。読み取り専用なのを面の暗さで示す */
+  .field:disabled {
+    background: var(--sunken);
+    color: var(--muted);
+    cursor: not-allowed;
   }
 
   .field-mono {
@@ -408,8 +429,13 @@
   /* パネルの上端に差し込む帯。角丸を持たず、下の罫線でタブ側と繋がる */
   .alert-bar {
     border-bottom: 1px solid var(--border);
-    border-left: 3px solid var(--fg);
-    background: var(--raised);
+    border-left: 3px solid var(--danger);
+    background: var(--danger-surface);
+  }
+
+  /* 見出しだけ赤にする。本文まで赤くすると読みづらい(notice-alert と同じ扱い) */
+  .alert-bar .section-title {
+    color: var(--danger);
   }
 
   /* 読み込み中に入力欄を覆う面。地の黒で背景ごと沈める */
@@ -431,11 +457,12 @@
     font-size: 0.8125rem;
   }
 
-  /* 手を入れてほしい通知。枠を明るくして左に棒を立てる(未入力欄と同じ記号) */
+  /* 手を入れてほしい通知。枠を赤くして左に棒を立てる(未入力欄と同じ記号) */
   .notice-alert {
-    border-color: var(--border-strong);
-    border-left: 3px solid var(--fg);
-    color: var(--fg);
+    border-color: var(--danger-border);
+    border-left: 3px solid var(--danger);
+    background: var(--danger-surface);
+    color: var(--danger);
   }
 
   /* --- 出力 --- */

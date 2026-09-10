@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import {
   DEFAULT_BACKGROUND_SETTINGS,
@@ -50,11 +50,25 @@ function Slider({
   disabled?: boolean;
   onChange: (value: number) => void;
 }) {
+  /* ドラッグ中は親の再描画を待たず、自分の値でつまみを描く。
+     制御コンポーネントのままだと、親の更新(背景の焼き直しを伴うので重い)が
+     ポインタに追いつかず、commit のたびに古い値で DOM を上書きしてしまい、
+     つまみが引き戻されて掴めないように見える */
+  const [dragging, setDragging] = useState<number | null>(null);
+  const shown = dragging ?? value;
+
+  useEffect(() => {
+    // 親が追いついたら手放して、ふつうの制御コンポーネントに戻す。
+    // 指を離した時点で手放すと、親がまだ古い値のときに一瞬つまみが飛ぶので、
+    // 追いついたかどうかだけで判断する(念のため blur でも手放す)
+    if (dragging !== null && value === dragging) setDragging(null);
+  }, [value, dragging]);
+
   return (
     <div>
       <div className="flex items-baseline justify-between gap-3">
         <span className="label">{label}</span>
-        <span className="value">{format(value)}</span>
+        <span className="value">{format(shown)}</span>
       </div>
       <input
         type="range"
@@ -62,10 +76,15 @@ function Slider({
         min={min}
         max={max}
         step={step}
-        value={value}
+        value={shown}
         disabled={disabled}
         aria-label={label}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          setDragging(next);
+          onChange(next);
+        }}
+        onBlur={() => setDragging(null)}
       />
     </div>
   );
@@ -170,7 +189,7 @@ export default function SetlistBackgroundControls({
         </div>
       </div>
 
-      {error !== '' && <p className="hint mt-2 text-fg">{error}</p>}
+      {error !== '' && <p className="hint mt-2 text-danger">{error}</p>}
 
       {!source ? (
         <p className="hint mt-2">

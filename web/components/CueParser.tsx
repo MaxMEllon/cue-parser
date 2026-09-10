@@ -6,6 +6,7 @@ import { parseCueSheet, serializeCueSheet, serializeYouTubeTimeline, formatHMSTi
 import type { ParseResult, CueSheet } from '@maxmellon/cue-parser';
 import { applyOffsetToCueSheet, formatOffset, hasClampedTracks, parseOffsetInput } from '@/utils/offset';
 import { countMissingFields, isBlank } from '@/utils/validation';
+import { applyIdMode, hasAnyId, idFlagsAt, type IdFlags } from '@/utils/idMode';
 import SetlistImage from '@/components/SetlistImage';
 import { DEFAULT_APPEARANCE, type SetlistAppearance } from '@/components/SetlistBackgroundControls';
 
@@ -53,11 +54,17 @@ export default function CueParser() {
   const [offsetError, setOffsetError] = useState(false);
   // セトリ画像の背景と文字の設定。タブを切り替えても消えないよう、ここで持つ
   const [appearance, setAppearance] = useState<SetlistAppearance>(DEFAULT_APPEARANCE);
+  // ID モード(█ で伏せる)の印。tracks と同じ並びで、曲名とアーティストは個別に持つ
+  const [idTracks, setIdTracks] = useState<IdFlags[]>([]);
 
-  // オフセットを適用したCUEシート。全ての出力(解析データ/CUE/YouTube/JSON)はこれを参照する
+  // オフセットと ID モードを適用したCUEシート。
+  // 全ての出力(解析データ/CUE/YouTube/JSON/セトリ画像)はこれを参照する
   const offsetCueSheet = useMemo(
-    () => (result?.cueSheet ? applyOffsetToCueSheet(result.cueSheet, offsetSeconds) : undefined),
-    [result, offsetSeconds]
+    () =>
+      result?.cueSheet
+        ? applyIdMode(applyOffsetToCueSheet(result.cueSheet, offsetSeconds), idTracks)
+        : undefined,
+    [result, offsetSeconds, idTracks]
   );
 
   const isOffsetClamped = useMemo(
@@ -65,8 +72,12 @@ export default function CueParser() {
     [result, offsetSeconds]
   );
 
-  // タイトル・アーティストの未入力数。0 より大きい場合はユーザーに編集を促す
-  const missingFieldCount = useMemo(() => countMissingFields(result?.cueSheet), [result]);
+  // タイトル・アーティストの未入力数。0 より大きい場合はユーザーに編集を促す。
+  // ID モードのトラックは「わざと伏せている」ので未入力には数えない
+  const missingFieldCount = useMemo(
+    () => countMissingFields(result?.cueSheet ? applyIdMode(result.cueSheet, idTracks) : undefined),
+    [result, idTracks]
+  );
 
   // 編集はオフセット適用前の元データに対して行う
   const updateCueSheet = (updater: (cueSheet: CueSheet) => CueSheet) => {
@@ -121,6 +132,7 @@ export default function CueParser() {
 
     const parseResult = parseCueSheet(cueContent);
     setResult(parseResult);
+    setIdTracks([]);
     setActiveTab('serialized');
   }, [input]);
 
@@ -133,6 +145,7 @@ export default function CueParser() {
   const handleClear = () => {
     setInput('');
     setResult(null);
+    setIdTracks([]);
     applyOffsetSeconds(0);
     appearance.source?.release();
     setAppearance(DEFAULT_APPEARANCE);
@@ -169,10 +182,22 @@ export default function CueParser() {
     }
   };
 
+  // ID モードの入り切り。元の値は残したまま、出力にだけ █ をかぶせる
+  const toggleIdMode = (trackIndex: number, field: 'title' | 'performer') => {
+    setIdTracks((prev) => {
+      const next = [...prev];
+      const flags = idFlagsAt(next, trackIndex);
+      next[trackIndex] = { ...flags, [field]: !flags[field] };
+      return next;
+    });
+  };
+
   const handleDeleteTrack = (trackIndex: number) => {
     if (!result?.cueSheet) return;
 
     const updatedTracks = result.cueSheet.tracks.filter((_, index) => index !== trackIndex);
+    // ID モードの印もトラックと同じ並びで詰める
+    setIdTracks((prev) => prev.filter((_, index) => index !== trackIndex));
 
     // If no tracks remain, clear the result
     if (updatedTracks.length === 0) {
@@ -324,6 +349,9 @@ export default function CueParser() {
                     {track.flags?.map((flag, i) => (
                       <span key={i} className="badge">{flag}</span>
                     ))}
+                    {hasAnyId(idFlagsAt(idTracks, index)) && (
+                      <span className="badge badge-solid">ID</span>
+                    )}
                   </div>
                   <button
                     onClick={() => handleDeleteTrack(index)}
@@ -337,7 +365,18 @@ export default function CueParser() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                   <div>
-                    <label className="label mb-1" htmlFor={`track-${index}-title`}>Title</label>
+                    <div className="flex items-baseline justify-between gap-2 mb-1">
+                      <label className="label" htmlFor={`track-${index}-title`}>Title</label>
+                      <button
+                        onClick={() => toggleIdMode(index, 'title')}
+                        className={idFlagsAt(idTracks, index).title ? 'btn btn-xs btn-primary' : 'btn btn-xs'}
+                        aria-pressed={idFlagsAt(idTracks, index).title}
+                        title="曲名を █ で伏せる (元の値は残ります)"
+                        aria-label={`トラック ${track.number} のタイトルを ID にする`}
+                      >
+                        ID
+                      </button>
+                    </div>
                     <input
                       id={`track-${index}-title`}
                       type="text"
@@ -345,12 +384,25 @@ export default function CueParser() {
                       onChange={(e) => handleTrackFieldChange(index, 'title', e.target.value)}
                       placeholder="未入力 - タイトルを入力してください"
                       aria-label={`トラック ${track.number} のタイトル`}
-                      aria-invalid={isBlank(track.title)}
+                      // ID の間は伏せ字を表示しているだけなので、書き換えさせない
+                      disabled={idFlagsAt(idTracks, index).title}
+                      aria-invalid={!idFlagsAt(idTracks, index).title && isBlank(track.title)}
                       className="field"
                     />
                   </div>
                   <div>
-                    <label className="label mb-1" htmlFor={`track-${index}-performer`}>Performer</label>
+                    <div className="flex items-baseline justify-between gap-2 mb-1">
+                      <label className="label" htmlFor={`track-${index}-performer`}>Performer</label>
+                      <button
+                        onClick={() => toggleIdMode(index, 'performer')}
+                        className={idFlagsAt(idTracks, index).performer ? 'btn btn-xs btn-primary' : 'btn btn-xs'}
+                        aria-pressed={idFlagsAt(idTracks, index).performer}
+                        title="アーティストを █ で伏せる (元の値は残ります)"
+                        aria-label={`トラック ${track.number} のアーティストを ID にする`}
+                      >
+                        ID
+                      </button>
+                    </div>
                     <input
                       id={`track-${index}-performer`}
                       type="text"
@@ -358,7 +410,8 @@ export default function CueParser() {
                       onChange={(e) => handleTrackFieldChange(index, 'performer', e.target.value)}
                       placeholder="未入力 - アーティストを入力してください"
                       aria-label={`トラック ${track.number} のアーティスト`}
-                      aria-invalid={isBlank(track.performer)}
+                      disabled={idFlagsAt(idTracks, index).performer}
+                      aria-invalid={!idFlagsAt(idTracks, index).performer && isBlank(track.performer)}
                       className="field"
                     />
                   </div>
@@ -559,7 +612,7 @@ export default function CueParser() {
                     未入力の項目が {missingFieldCount} 件あります
                   </p>
                   <p className="hint mt-2">
-                    「解析データ」タブの白い棒が付いたフォームを埋めてください。編集内容は CUE / YouTube / JSON の全ての出力に反映されます。
+                    「解析データ」タブの赤い棒が付いたフォームを埋めてください。編集内容は CUE / YouTube / JSON の全ての出力に反映されます。
                   </p>
                   {/* 解析データタブ表示中は非表示にするが、レイアウトシフトを避けるため領域は確保する */}
                   <button
@@ -630,7 +683,7 @@ export default function CueParser() {
                   </div>
                 </div>
                 {offsetError ? (
-                  <p className="hint mt-3 text-fg">
+                  <p className="hint mt-3 text-danger">
                     形式が正しくありません。「90」「1:30」「00:01:30」のように入力してください (先頭に - で巻き戻し)。
                   </p>
                 ) : (
@@ -658,7 +711,7 @@ export default function CueParser() {
                       <span className="sm:hidden">{tab.shortName}</span>
                       {tab.id === 'parsed' && missingFieldCount > 0 && (
                         <span
-                          className="w-1.5 h-1.5 shrink-0 rounded-full bg-fg"
+                          className="w-1.5 h-1.5 shrink-0 rounded-full bg-danger"
                           title="未入力の項目があります"
                           aria-label="未入力の項目があります"
                         />
