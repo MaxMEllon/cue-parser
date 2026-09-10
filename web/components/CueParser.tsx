@@ -6,6 +6,8 @@ import { parseCueSheet, serializeCueSheet, serializeYouTubeTimeline, formatHMSTi
 import type { ParseResult, CueSheet } from '@maxmellon/cue-parser';
 import { applyOffsetToCueSheet, formatOffset, hasClampedTracks, parseOffsetInput } from '@/utils/offset';
 import { countMissingFields, isBlank } from '@/utils/validation';
+import SetlistImage from '@/components/SetlistImage';
+import { DEFAULT_APPEARANCE, type SetlistAppearance } from '@/components/SetlistBackgroundControls';
 
 const sampleCue = `REM GENRE "Electronic"
 REM DATE "2023"
@@ -36,18 +38,21 @@ const TABS = [
   { id: 'parsed', name: '解析データ', shortName: 'データ' },
   { id: 'serialized', name: 'CUE 出力', shortName: 'CUE' },
   { id: 'youtube', name: 'YouTube タイムライン', shortName: 'YouTube' },
+  { id: 'setlist', name: 'セトリ画像', shortName: '画像' },
   { id: 'json', name: 'JSON 出力', shortName: 'JSON' },
 ] as const;
 
 export default function CueParser() {
   const [input, setInput] = useState("");
   const [result, setResult] = useState<ParseResult | null>(null);
-  const [activeTab, setActiveTab] = useState<'parsed' | 'serialized' | 'youtube' | 'json'>('serialized');
+  const [activeTab, setActiveTab] = useState<'parsed' | 'serialized' | 'youtube' | 'json' | 'setlist'>('serialized');
   const [isLoading, setIsLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [offsetSeconds, setOffsetSeconds] = useState(0);
   const [offsetText, setOffsetText] = useState(formatOffset(0));
   const [offsetError, setOffsetError] = useState(false);
+  // セトリ画像の背景と文字の設定。タブを切り替えても消えないよう、ここで持つ
+  const [appearance, setAppearance] = useState<SetlistAppearance>(DEFAULT_APPEARANCE);
 
   // オフセットを適用したCUEシート。全ての出力(解析データ/CUE/YouTube/JSON)はこれを参照する
   const offsetCueSheet = useMemo(
@@ -129,6 +134,8 @@ export default function CueParser() {
     setInput('');
     setResult(null);
     applyOffsetSeconds(0);
+    appearance.source?.release();
+    setAppearance(DEFAULT_APPEARANCE);
   };
 
   const handleDownloadCue = () => {
@@ -231,15 +238,20 @@ export default function CueParser() {
 
   const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
     onDrop,
-    accept: {
-      'text/plain': ['.cue'],
-      'application/octet-stream': ['.cue'],
-      'text/x-cue': ['.cue'],
-    },
+    // accept は指定しない。.cue に決まった MIME が無く、OS から掴んだファイルの type は
+    // 大抵空になる。ドラッグ中はファイル名も読めないので、accept を付けると
+    // 正しい .cue でも「無効なファイル」と出てしまう。可否の判定は下の validator と
+    // onDrop(ドロップ後、実ファイルの拡張子が読める時点)で行う
     multiple: false,
     noClick: true, // We'll handle clicks separately
     validator: (file) => {
-      if (!file.name.toLowerCase().endsWith('.cue')) {
+      // ドラッグ中(dragenter/dragover)は File ではなく DataTransferItem が渡ってくるので
+      // name が無い。ここで落ちると react-dropzone が isDragActive を立てられず、
+      // 枠が反応しないまま「ドロップを受け付けない」ように見える
+      const name = (file as Partial<File>).name;
+      if (typeof name !== 'string') return null;
+
+      if (!name.toLowerCase().endsWith('.cue')) {
         return {
           code: 'invalid-file-type',
           message: 'Only .cue files are allowed'
@@ -441,7 +453,18 @@ export default function CueParser() {
                   }
                 }, 100);
               }}
-              className={isDragActive ? 'opacity-20 pointer-events-none' : ''}
+              // textarea 自身もブラウザの標準のドロップ先なので、既定の動作(ファイル名の
+              // 差し込みなど)だけ止めて、イベントはそのまま親のドロップゾーンへ流す。
+              // ここを pointer-events: none で逃がすと、ドラッグ中に当たり判定の相手が
+              // textarea ↔ 枠の間で入れ替わり、dragenter/dragleave の数が合わなくなって
+              // ドロップを取りこぼす
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => e.preventDefault()}
+              // CUE は英数字と固有名詞ばかりで、赤い波線が出ても邪魔にしかならない
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+              className={isDragActive ? 'opacity-20' : ''}
               placeholder="CUEシートの内容をここに貼り付けるか、.cueファイルをドラッグ&ドロップしてください..."
             />
 
@@ -688,6 +711,14 @@ export default function CueParser() {
                       {JSON.stringify(offsetCueSheet, null, 2)}
                     </pre>
                   </div>
+                )}
+
+                {activeTab === 'setlist' && (
+                  <SetlistImage
+                    cueSheet={offsetCueSheet}
+                    appearance={appearance}
+                    onAppearanceChange={setAppearance}
+                  />
                 )}
               </div>
             </div>
