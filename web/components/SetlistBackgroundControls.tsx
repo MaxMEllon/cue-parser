@@ -1,9 +1,12 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import type { ChangeEvent, DragEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import {
   DEFAULT_BACKGROUND_SETTINGS,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  clampBackgroundSettings,
   loadImageSource,
   type BackgroundSettings,
   type BackgroundSource,
@@ -47,11 +50,25 @@ function Slider({
   disabled?: boolean;
   onChange: (value: number) => void;
 }) {
+  /* ドラッグ中は親の再描画を待たず、自分の値でつまみを描く。
+     制御コンポーネントのままだと、親の更新(背景の焼き直しを伴うので重い)が
+     ポインタに追いつかず、commit のたびに古い値で DOM を上書きしてしまい、
+     つまみが引き戻されて掴めないように見える */
+  const [dragging, setDragging] = useState<number | null>(null);
+  const shown = dragging ?? value;
+
+  useEffect(() => {
+    // 親が追いついたら手放して、ふつうの制御コンポーネントに戻す。
+    // 指を離した時点で手放すと、親がまだ古い値のときに一瞬つまみが飛ぶので、
+    // 追いついたかどうかだけで判断する(念のため blur でも手放す)
+    if (dragging !== null && value === dragging) setDragging(null);
+  }, [value, dragging]);
+
   return (
     <div>
       <div className="flex items-baseline justify-between gap-3">
         <span className="label">{label}</span>
-        <span className="value">{format(value)}</span>
+        <span className="value">{format(shown)}</span>
       </div>
       <input
         type="range"
@@ -59,10 +76,15 @@ function Slider({
         min={min}
         max={max}
         step={step}
-        value={value}
+        value={shown}
         disabled={disabled}
         aria-label={label}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          setDragging(next);
+          onChange(next);
+        }}
+        onBlur={() => setDragging(null)}
       />
     </div>
   );
@@ -82,7 +104,6 @@ export default function SetlistBackgroundControls({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
-  const [isDragging, setIsDragging] = useState(false);
 
   const { source, settings, theme } = appearance;
 
@@ -91,6 +112,19 @@ export default function SetlistBackgroundControls({
 
   const patchTheme = (patch: Partial<SetlistTheme>) =>
     onChange({ ...appearance, theme: { ...theme, ...patch } });
+
+  // つまみでの拡大は画面の中央を軸にする。ずらし量も同じ比で伸ばすと中央が動かない
+  const handleZoom = (zoom: number) => {
+    if (!source) return;
+    const ratio = settings.zoom === 0 ? 1 : zoom / settings.zoom;
+    onChange({
+      ...appearance,
+      settings: clampBackgroundSettings(
+        { ...settings, zoom, offsetX: settings.offsetX * ratio, offsetY: settings.offsetY * ratio },
+        source
+      ),
+    });
+  };
 
   const acceptFile = async (file: File | undefined) => {
     if (!file) return;
@@ -104,7 +138,12 @@ export default function SetlistBackgroundControls({
       // 差し替え前の画像は必ず手放す(オブジェクト URL / ImageBitmap の解放)
       source?.release();
       setError('');
-      onChange({ ...appearance, source: next });
+      // 縦横比が変わると前の画像のずらし量が限界を超えることがあるので、ここで詰め直す
+      onChange({
+        ...appearance,
+        source: next,
+        settings: clampBackgroundSettings(settings, next),
+      });
     } catch {
       setError('画像を読み込めませんでした。');
     }
@@ -116,12 +155,6 @@ export default function SetlistBackgroundControls({
     event.target.value = '';
   };
 
-  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setIsDragging(false);
-    void acceptFile(event.dataTransfer.files?.[0]);
-  };
-
   const handleRemove = () => {
     source?.release();
     setError('');
@@ -131,17 +164,10 @@ export default function SetlistBackgroundControls({
   const handleReset = () =>
     onChange({ ...appearance, settings: DEFAULT_BACKGROUND_SETTINGS, theme: DEFAULT_THEME });
 
+  // 背景画像はドラッグ&ドロップに対応しない。この中にスライダーがあり、
+  // つまみを掴む操作とドロップ判定がぶつかるので、選択はボタンだけにしてある
   return (
-    <div
-      className="panel-inset p-4"
-      data-drag={isDragging ? 'active' : undefined}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setIsDragging(true);
-      }}
-      onDragLeave={() => setIsDragging(false)}
-      onDrop={handleDrop}
-    >
+    <div className="panel-inset p-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <span className="label">背景画像</span>
         <div className="flex items-center gap-2">
@@ -163,11 +189,11 @@ export default function SetlistBackgroundControls({
         </div>
       </div>
 
-      {error !== '' && <p className="hint mt-2 text-fg">{error}</p>}
+      {error !== '' && <p className="hint mt-2 text-danger">{error}</p>}
 
       {!source ? (
         <p className="hint mt-2">
-          画像をここにドロップするか選ぶと、セトリの下に敷けます。明るさや文字色はあとから調節できます。
+          「画像を選ぶ」から読み込むと、セトリの下に敷けます。明るさ・位置・文字色はあとから調節できます。
         </p>
       ) : (
         <div className="mt-4 space-y-4">
@@ -176,6 +202,11 @@ export default function SetlistBackgroundControls({
               この環境では WebGL も Canvas のフィルタも使えないため、明るさ以外の調節は効きません。
             </p>
           )}
+
+          <p className="hint">
+            下のプレビューを直接ドラッグすると位置、ホイール(指なら 2 本でつまむ)で拡大率が変わります。
+            1.00x は画面ぴったりで動かせる幅がないので、動かしたい方向には拡大してください。
+          </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Slider
@@ -218,13 +249,13 @@ export default function SetlistBackgroundControls({
               onChange={(blur) => patchSettings({ blur })}
             />
             <Slider
-              label="縦位置"
-              value={settings.focusY}
-              min={0}
-              max={1}
+              label="拡大率"
+              value={settings.zoom}
+              min={ZOOM_MIN}
+              max={ZOOM_MAX}
               step={0.01}
-              format={percent}
-              onChange={(focusY) => patchSettings({ focusY })}
+              format={(value) => `${value.toFixed(2)}x`}
+              onChange={handleZoom}
             />
             <Slider
               label="黒の覆い"

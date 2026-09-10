@@ -18,6 +18,7 @@ module.exports = {
         panel: 'var(--panel)',
         raised: 'var(--raised)',
         sunken: 'var(--sunken)',
+        danger: 'var(--danger)',
       },
       fontFamily: {
         sans: ['var(--font-sans)'],
