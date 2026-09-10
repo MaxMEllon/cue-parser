@@ -5,7 +5,7 @@
  *
  * @example
  * ```typescript
- * import { parseCueSheet, CueParser } from 'cue-parser';
+ * import { parseCueSheet, CueParser } from '@maxmellon/cue-parser';
  *
  * const cueContent = `
  * TITLE "Example Album"

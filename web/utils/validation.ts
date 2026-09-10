@@ -1,4 +1,4 @@
-import type { CueSheet } from 'cue-parser';
+import type { CueSheet } from '@maxmellon/cue-parser';
 
 /**
  * 編集が必要な項目(タイトル・アーティストの未入力)を検出するユーティリティ

@@ -1,8 +1,12 @@
 # CUE Parser
 
+[![npm version](https://img.shields.io/npm/v/@maxmellon/cue-parser.svg)](https://www.npmjs.com/package/@maxmellon/cue-parser)
+[![license](https://img.shields.io/npm/l/@maxmellon/cue-parser.svg)](LICENSE)
+
 A TypeScript library for parsing CUE sheet files according to the [CUE Sheet specification](https://wyday.com/cuesharp/specification.php).
 
 🌐 **[Live Demo](https://melocil.de/cue-parser/)** - Try the CUE parser online!
+📦 **[npm: @maxmellon/cue-parser](https://www.npmjs.com/package/@maxmellon/cue-parser)**
 
 ## Features
 
@@ -16,12 +20,13 @@ A TypeScript library for parsing CUE sheet files according to the [CUE Sheet spe
 ## Installation
 
 ```bash
-npm install cue-parser
+npm install @maxmellon/cue-parser
 ```
 
 ## CLI Usage
 
-After installation, you can use the `cue-parser` command directly:
+After installation, you can use the `cue-parser` command directly.
+To run it without installing, use `npx @maxmellon/cue-parser album.cue`.
 
 ```bash
 # Parse and display a CUE file
@@ -139,7 +144,7 @@ $ cue-parser album.cue --validate --stats
 ### Basic Parsing
 
 ```typescript
-import { parseCueSheet } from 'cue-parser';
+import { parseCueSheet } from '@maxmellon/cue-parser';
 
 const cueContent = `
 TITLE "Example Album"
@@ -163,7 +168,7 @@ if (result.cueSheet) {
 ### Using the Parser Class
 
 ```typescript
-import { CueParser } from 'cue-parser';
+import { CueParser } from '@maxmellon/cue-parser';
 
 const parser = new CueParser();
 const result = parser.parse(cueContent);
@@ -185,7 +190,7 @@ if (result.warnings.length > 0) {
 ### Working with MSF Time Format
 
 ```typescript
-import { parseHMSTime, formatHMSTime, hmsToSeconds } from 'cue-parser';
+import { parseHMSTime, formatHMSTime, hmsToSeconds } from '@maxmellon/cue-parser';
 
 // Parse MSF time string
 const time = parseHMSTime('1:30:45'); // { hour: 1, minute: 30, second: 45 }
@@ -200,7 +205,7 @@ const totalSeconds = hmsToSeconds(time); // 5445 seconds
 ### Serializing CUE Sheets
 
 ```typescript
-import { parseCueSheet, serializeCueSheet, formatCueSheet, createMinimalCueSheet } from 'cue-parser';
+import { parseCueSheet, serializeCueSheet, formatCueSheet, createMinimalCueSheet } from '@maxmellon/cue-parser';
 
 const result = parseCueSheet(cueContent);
 

@@ -1,5 +1,5 @@
 {
-  "name": "cue-parser",
+  "name": "@maxmellon/cue-parser",
   "version": "1.0.0",
   "type": "module",
   "main": "dist/src/index.js",
@@ -40,6 +40,9 @@
   },
   "bugs": {
     "url": "https://github.com/MaxMEllon/cue-parser/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "node": ">=18.0.0"

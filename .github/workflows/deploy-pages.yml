@@ -41,10 +41,10 @@ jobs:
           cd web
           npm ci
 
-      - name: Link local cue-parser
+      - name: Link local @maxmellon/cue-parser
         run: |
           cd web
-          npm link cue-parser
+          npm link @maxmellon/cue-parser
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

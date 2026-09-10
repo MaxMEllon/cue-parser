@@ -1,5 +1,5 @@
-import { hmsToSeconds, secondsToHMS } from 'cue-parser';
-import type { CueSheet, HMSTime } from 'cue-parser';
+import { hmsToSeconds, secondsToHMS } from '@maxmellon/cue-parser';
+import type { CueSheet, HMSTime } from '@maxmellon/cue-parser';
 
 /**
  * 時刻オフセット関連のユーティリティ
