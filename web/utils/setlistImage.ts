@@ -1,14 +1,48 @@
 import type { CueSheet } from '@maxmellon/cue-parser';
 
 /**
- * セトリ画像(1080x1920)の組版と描画。
+ * セトリ画像の組版と描画。
  *
  * React には依存しない。計測(planSetlistLayout)と描画(renderSetlistPage)を分けてあるので、
  * 縮尺を探るために何度レイアウトし直しても画面はちらつかない。
+ *
+ * 出力サイズは SETLIST_SIZES から選ぶ。寸法はすべて 1080 幅を基準にした比で持っているので、
+ * 幅が変われば余白も級数も同じ比で付いてくる。高さの違いは 1 枚に入る曲数だけに効く。
  */
 
-export const SETLIST_WIDTH = 1080;
-export const SETLIST_HEIGHT = 1920;
+export type SetlistSizeId = 'story' | 'portrait';
+
+export interface SetlistSize {
+  id: SetlistSizeId;
+  width: number;
+  height: number;
+  /** 用途。プレビューの下に出す */
+  note: string;
+  /**
+   * 詰めて組むときの縮尺の下限。ここまで小さくしても入らなければページを割る。
+   * 3:4 は 1 枚で投げる絵なので、縦の短さぶんは文字を落として 1 枚に収める
+   */
+  minScale: number;
+}
+
+export const SETLIST_SIZES: readonly SetlistSize[] = [
+  {
+    id: 'story',
+    width: 1080,
+    height: 1920,
+    note: 'Instagram / TikTok ストーリー向け',
+    minScale: 0.62,
+  },
+  {
+    id: 'portrait',
+    width: 1280,
+    height: 1707,
+    note: 'X などのタイムライン向け(3:4)',
+    minScale: 0.3,
+  },
+];
+
+export const DEFAULT_SETLIST_SIZE: SetlistSize = SETLIST_SIZES[0];
 
 /* app/globals.css のトークンの写し。あちらを触ったらこちらも揃える。
    色相は使わない。区別は明度・字間・罫線だけで付ける。 */
@@ -63,7 +97,7 @@ export const DEFAULT_THEME: SetlistTheme = {
 
 export interface RenderOptions {
   theme?: SetlistTheme;
-  /** 1080x1920 に整形済みの背景。setlistBackground.ts が作る */
+  /** 出力サイズに整形済みの背景。setlistBackground.ts が作る */
   background?: CanvasImageSource | null;
 }
 
@@ -86,27 +120,54 @@ function endText(ctx: Ctx): void {
   ctx.shadowOffsetY = 0;
 }
 
-const SANS = "system-ui, -apple-system, 'Segoe UI', 'Noto Sans JP', sans-serif";
+/* globals.css の --font-mono の写し。画像の中の文字はすべてこれ 1 本で組む */
 const MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Noto Sans Mono', monospace";
 
 const font = (weight: number, px: number, stack: string) => `${weight} ${px}px ${stack}`;
 
-/* 余白 */
-const SIDE = 72;
-const PAD_TOP = 96;
-const PAD_BOTTOM = 88;
-const CONTENT_W = SETLIST_WIDTH - SIDE * 2;
+/* 以下の寸法はこの幅での px。実際の幅との比(unit)を掛けて使う */
+const BASE_WIDTH = 1080;
 
-/* ヘッダー。強調は色ではなく左の白い棒で作る(globals.css の .field-invalid と同じ理屈) */
-const HEADER_BAR_W = 6;
-const HEADER_INDENT = 28;
+/** サイズごとの寸法。1 回のレイアウト・描画で使い回す */
+interface Metrics {
+  width: number;
+  height: number;
+  /** 基準幅に対する倍率 */
+  unit: number;
+  side: number;
+  contentW: number;
+  padTop: number;
+  /** ヘッダーの強調は色ではなく左の白い棒で作る(globals.css の .field-invalid と同じ理屈) */
+  headerBarW: number;
+  headerIndent: number;
+  footerBaseline: number;
+  footerRuleY: number;
+  tracksBottom: number;
+}
 
-/* フッター */
-const FOOTER_BASELINE = SETLIST_HEIGHT - PAD_BOTTOM;
-const FOOTER_RULE_Y = FOOTER_BASELINE - 44;
-const TRACKS_BOTTOM = FOOTER_RULE_Y - 36;
+function metricsOf(size: SetlistSize): Metrics {
+  const unit = size.width / BASE_WIDTH;
+  const side = 72 * unit;
+  const footerBaseline = size.height - 88 * unit;
+  const footerRuleY = footerBaseline - 44 * unit;
 
-/* 縮尺の探索範囲。曲数が少ないときは 1.0 より大きく組んで余白を埋める */
+  return {
+    width: size.width,
+    height: size.height,
+    unit,
+    side,
+    contentW: size.width - side * 2,
+    padTop: 96 * unit,
+    headerBarW: 6 * unit,
+    headerIndent: 28 * unit,
+    footerBaseline,
+    footerRuleY,
+    tracksBottom: footerRuleY - 36 * unit,
+  };
+}
+
+/* 縮尺の探索範囲。曲数が少ないときは 1.0 より大きく組んで余白を埋める。
+   下限はゆったり組むときだけ SCALE_MIN で、詰めて組むときはサイズごとの minScale まで落とす */
 const SCALE_MAX = 1.5;
 const SCALE_MIN = 0.62;
 const SCALE_STEP = 0.02;
@@ -131,6 +192,7 @@ export interface SetlistModel {
 export interface SetlistOptions {
   /** タイトル・アーティストのヘッダーを出すか */
   showHeader: boolean;
+  size: SetlistSize;
 }
 
 type DensityMode = 'comfortable' | 'compact';
@@ -290,14 +352,20 @@ function trackedWidth(ctx: Ctx, text: string, track: number): number {
 
 /* ---------------- レイアウト ---------------- */
 
-function planHeader(ctx: Ctx, model: SetlistModel, options: SetlistOptions): HeaderLayout {
-  const textW = CONTENT_W - HEADER_INDENT;
+function planHeader(
+  ctx: Ctx,
+  model: SetlistModel,
+  options: SetlistOptions,
+  m: Metrics
+): HeaderLayout {
+  const u = m.unit;
+  const textW = m.contentW - m.headerIndent;
 
-  const barTop = PAD_TOP;
-  const kickerBaseline = PAD_TOP + 22;
+  const barTop = m.padTop;
+  const kickerBaseline = m.padTop + 22 * u;
   let y = kickerBaseline;
 
-  let titleFontSize = 64;
+  let titleFontSize = 64 * u;
   let titleLines: string[] = [];
   let titleFirstBaseline = 0;
   let titleLineHeight = 0;
@@ -305,19 +373,19 @@ function planHeader(ctx: Ctx, model: SetlistModel, options: SetlistOptions): Hea
 
   if (options.showHeader) {
     // 2 行に収まる一番大きい級数を採る
-    for (; titleFontSize >= 40; titleFontSize -= 4) {
-      ctx.font = font(600, titleFontSize, SANS);
+    for (; titleFontSize >= 40 * u; titleFontSize -= 4 * u) {
+      ctx.font = font(600, titleFontSize, MONO);
       titleLines = wrapText(ctx, model.title, textW, 2);
       if (titleLines.length === 1 || titleLines[titleLines.length - 1].indexOf('…') === -1) break;
     }
 
     titleLineHeight = Math.round(titleFontSize * 1.18);
-    y += 24 + titleFontSize;
+    y += 24 * u + titleFontSize;
     titleFirstBaseline = y;
     y += (titleLines.length - 1) * titleLineHeight;
 
     if (model.performer !== '') {
-      y += 20 + 30;
+      y += (20 + 30) * u;
       performerBaseline = y;
     }
   }
@@ -326,13 +394,13 @@ function planHeader(ctx: Ctx, model: SetlistModel, options: SetlistOptions): Hea
   if (options.showHeader && model.date !== '') metaParts.push(model.date.toUpperCase());
   metaParts.push(`${model.rows.length} TRACKS`);
 
-  y += 16 + 22;
+  y += (16 + 22) * u;
   const metaBaseline = y;
-  const ruleY = metaBaseline + 40;
+  const ruleY = metaBaseline + 40 * u;
 
   return {
     barTop,
-    barBottom: metaBaseline + 6,
+    barBottom: metaBaseline + 6 * u,
     kickerBaseline,
     titleFontSize,
     titleLines,
@@ -342,7 +410,7 @@ function planHeader(ctx: Ctx, model: SetlistModel, options: SetlistOptions): Hea
     metaBaseline,
     meta: metaParts.join(' · '),
     ruleY,
-    tracksTop: ruleY + 44,
+    tracksTop: ruleY + 44 * u,
   };
 }
 
@@ -363,30 +431,38 @@ interface RowMetrics {
   compactPerformerW: number;
 }
 
-function rowMetrics(scale: number, mode: DensityMode): RowMetrics {
-  const numColW = 78 * scale;
-  const textW = CONTENT_W - numColW;
+function rowMetrics(scale: number, mode: DensityMode, m: Metrics): RowMetrics {
+  // 縮尺とサイズの倍率は同じ向きに効くので、掛け合わせて 1 つの係数にする
+  const s = scale * m.unit;
+  const numColW = 78 * s;
+  const textW = m.contentW - numColW;
 
   return {
-    numFont: font(500, 30 * scale, MONO),
-    titleFont: font(600, 34 * scale, SANS),
-    performerFont: font(400, 24 * scale, MONO),
-    numRight: SIDE + numColW - 24 * scale,
-    textX: SIDE + numColW,
+    numFont: font(500, 30 * s, MONO),
+    titleFont: font(600, 34 * s, MONO),
+    performerFont: font(400, 24 * s, MONO),
+    numRight: m.side + numColW - 24 * s,
+    textX: m.side + numColW,
     textW,
-    titleLineHeight: 44 * scale,
-    performerLineHeight: 32 * scale,
-    padTop: (mode === 'comfortable' ? 8 : 10) * scale,
-    padBottom: (mode === 'comfortable' ? 14 : 12) * scale,
-    titleSize: 34 * scale,
-    performerSize: 24 * scale,
-    compactGap: 24 * scale,
+    titleLineHeight: 44 * s,
+    performerLineHeight: 32 * s,
+    padTop: (mode === 'comfortable' ? 8 : 10) * s,
+    padBottom: (mode === 'comfortable' ? 14 : 12) * s,
+    titleSize: 34 * s,
+    performerSize: 24 * s,
+    compactGap: 24 * s,
     compactPerformerW: textW * 0.36,
   };
 }
 
-function prepareRows(ctx: Ctx, model: SetlistModel, mode: DensityMode, scale: number): PreparedRow[] {
-  const m = rowMetrics(scale, mode);
+function prepareRows(
+  ctx: Ctx,
+  model: SetlistModel,
+  mode: DensityMode,
+  scale: number,
+  metrics: Metrics
+): PreparedRow[] {
+  const m = rowMetrics(scale, mode, metrics);
 
   return model.rows.map((row) => {
     if (mode === 'compact') {
@@ -474,13 +550,17 @@ export function planSetlistLayout(
   model: SetlistModel,
   options: SetlistOptions
 ): SetlistLayout {
-  const header = planHeader(ctx, model, options);
-  const available = TRACKS_BOTTOM - header.tracksTop;
+  const m = metricsOf(options.size);
+  const header = planHeader(ctx, model, options, m);
+  const available = m.tracksBottom - header.tracksTop;
   const modes: DensityMode[] = ['comfortable', 'compact'];
+  // ゆったり組むほうは行が 2 段になるので、小さくしても読みにくくなるだけ。
+  // 深く詰めるのは 1 行組みのときだけにする
+  const floorOf = (mode: DensityMode) => (mode === 'compact' ? options.size.minScale : SCALE_MIN);
 
   for (let i = 0; i < modes.length; i++) {
-    for (let scale = SCALE_MAX; scale >= SCALE_MIN - 1e-9; scale -= SCALE_STEP) {
-      const rows = prepareRows(ctx, model, modes[i], scale);
+    for (let scale = SCALE_MAX; scale >= floorOf(modes[i]) - 1e-9; scale -= SCALE_STEP) {
+      const rows = prepareRows(ctx, model, modes[i], scale, m);
       if (totalHeight(rows) <= available) {
         return { scale, mode: modes[i], header, pages: [rows], options };
       }
@@ -490,11 +570,12 @@ export function planSetlistLayout(
   // 最小の組みでも 1 枚に入らない → ページを割る。
   // まず最小の組みで必要な枚数を出し、その枚数を保てる中で一番大きい縮尺を採る
   // (枚数は最小のまま、文字はできるだけ大きく)
-  const floorRows = prepareRows(ctx, model, 'compact', SCALE_MIN);
+  const floor = floorOf('compact');
+  const floorRows = prepareRows(ctx, model, 'compact', floor, m);
   const minPages = paginate(floorRows, available).length;
 
-  for (let scale = SCALE_MAX; scale >= SCALE_MIN - 1e-9; scale -= SCALE_STEP) {
-    const rows = prepareRows(ctx, model, 'compact', scale);
+  for (let scale = SCALE_MAX; scale >= floor - 1e-9; scale -= SCALE_STEP) {
+    const rows = prepareRows(ctx, model, 'compact', scale, m);
     const pages = paginate(rows, available);
     if (pages.length <= minPages) {
       return { scale, mode: 'compact', header, pages, options };
@@ -502,7 +583,7 @@ export function planSetlistLayout(
   }
 
   return {
-    scale: SCALE_MIN,
+    scale: floor,
     mode: 'compact',
     header,
     pages: paginate(floorRows, available),
@@ -518,29 +599,36 @@ export function createMeasureContext(): Ctx | null {
 
 /* ---------------- 描画 ---------------- */
 
-function fillRule(ctx: Ctx, y: number, height: number, color: string): void {
+function fillRule(ctx: Ctx, m: Metrics, y: number, height: number, color: string): void {
   ctx.fillStyle = color;
-  ctx.fillRect(SIDE, Math.round(y), CONTENT_W, height);
+  ctx.fillRect(m.side, Math.round(y), m.contentW, height);
 }
 
-function drawHeader(ctx: Ctx, model: SetlistModel, layout: SetlistLayout, ink: Ink): void {
+function drawHeader(
+  ctx: Ctx,
+  model: SetlistModel,
+  layout: SetlistLayout,
+  ink: Ink,
+  m: Metrics
+): void {
   const { header, options } = layout;
   const { palette } = ink;
-  const textX = SIDE + HEADER_INDENT;
-  const textW = CONTENT_W - HEADER_INDENT;
+  const u = m.unit;
+  const textX = m.side + m.headerIndent;
+  const textW = m.contentW - m.headerIndent;
 
   ctx.fillStyle = palette.fg;
-  ctx.fillRect(SIDE, header.barTop, HEADER_BAR_W, header.barBottom - header.barTop);
+  ctx.fillRect(m.side, header.barTop, m.headerBarW, header.barBottom - header.barTop);
 
   beginText(ctx, ink);
   ctx.textAlign = 'left';
   ctx.fillStyle = palette.muted;
-  ctx.font = font(500, 22, MONO);
-  drawTracked(ctx, 'SETLIST', textX, header.kickerBaseline, 3.5);
+  ctx.font = font(500, 22 * u, MONO);
+  drawTracked(ctx, 'SETLIST', textX, header.kickerBaseline, 3.5 * u);
 
   if (options.showHeader) {
     ctx.fillStyle = palette.fg;
-    ctx.font = font(600, header.titleFontSize, SANS);
+    ctx.font = font(600, header.titleFontSize, MONO);
     for (let i = 0; i < header.titleLines.length; i++) {
       ctx.fillText(
         header.titleLines[i],
@@ -550,42 +638,61 @@ function drawHeader(ctx: Ctx, model: SetlistModel, layout: SetlistLayout, ink: I
     }
 
     if (model.performer !== '' && header.performerBaseline > 0) {
-      ctx.font = font(400, 30, MONO);
+      ctx.font = font(400, 30 * u, MONO);
       ctx.fillText(ellipsize(ctx, model.performer, textW), textX, header.performerBaseline);
     }
   }
 
   ctx.fillStyle = palette.muted;
-  ctx.font = font(400, 22, MONO);
-  drawTracked(ctx, header.meta, textX, header.metaBaseline, 3);
+  ctx.font = font(400, 22 * u, MONO);
+  drawTracked(ctx, header.meta, textX, header.metaBaseline, 3 * u);
   endText(ctx);
 
-  fillRule(ctx, header.ruleY, 2, options.showHeader ? palette.ruleStrong : palette.rule);
+  fillRule(ctx, m, header.ruleY, 2, options.showHeader ? palette.ruleStrong : palette.rule);
 }
 
-function drawFooter(ctx: Ctx, pageIndex: number, pageCount: number, ink: Ink): void {
+function drawFooter(
+  ctx: Ctx,
+  pageIndex: number,
+  pageCount: number,
+  ink: Ink,
+  m: Metrics
+): void {
   const { palette } = ink;
-  fillRule(ctx, FOOTER_RULE_Y, 1, palette.rule);
+  const u = m.unit;
+  fillRule(ctx, m, m.footerRuleY, 1, palette.rule);
 
   beginText(ctx, ink);
   ctx.textAlign = 'left';
   ctx.fillStyle = palette.muted;
-  ctx.font = font(400, CREDIT_SIZE, MONO);
-  drawTracked(ctx, CREDIT, SIDE, FOOTER_BASELINE, CREDIT_TRACK);
+  ctx.font = font(400, CREDIT_SIZE * u, MONO);
+  drawTracked(ctx, CREDIT, m.side, m.footerBaseline, CREDIT_TRACK * u);
 
   if (pageCount > 1) {
     const label = `${pageIndex + 1} / ${pageCount}`;
     ctx.fillStyle = palette.fg;
-    ctx.font = font(500, 24, MONO);
-    drawTracked(ctx, label, SIDE + CONTENT_W - trackedWidth(ctx, label, 2), FOOTER_BASELINE, 2);
+    ctx.font = font(500, 24 * u, MONO);
+    drawTracked(
+      ctx,
+      label,
+      m.side + m.contentW - trackedWidth(ctx, label, 2 * u),
+      m.footerBaseline,
+      2 * u
+    );
   }
   endText(ctx);
 }
 
-function drawRows(ctx: Ctx, layout: SetlistLayout, rows: PreparedRow[], ink: Ink): void {
+function drawRows(
+  ctx: Ctx,
+  layout: SetlistLayout,
+  rows: PreparedRow[],
+  ink: Ink,
+  metrics: Metrics
+): void {
   const { palette } = ink;
-  const m = rowMetrics(layout.scale, layout.mode);
-  const available = TRACKS_BOTTOM - layout.header.tracksTop;
+  const m = rowMetrics(layout.scale, layout.mode, metrics);
+  const available = metrics.tracksBottom - layout.header.tracksTop;
   const used = totalHeight(rows);
 
   // 余白の扱い。まず行間に配り(1 つあたり行高の 2.5 倍まで)、
@@ -618,7 +725,7 @@ function drawRows(ctx: Ctx, layout: SetlistLayout, rows: PreparedRow[], ink: Ink
       ctx.font = m.performerFont;
       if (layout.mode === 'compact') {
         ctx.textAlign = 'right';
-        ctx.fillText(row.performer, SIDE + CONTENT_W, firstBaseline);
+        ctx.fillText(row.performer, metrics.side + metrics.contentW, firstBaseline);
         ctx.textAlign = 'left';
       } else {
         ctx.fillText(
@@ -635,7 +742,7 @@ function drawRows(ctx: Ctx, layout: SetlistLayout, rows: PreparedRow[], ink: Ink
     if (i < rows.length - 1) {
       // 罫線は行間の真ん中に置く
       ctx.fillStyle = palette.hairline;
-      ctx.fillRect(m.textX, Math.round(y + extra / 2) - 1, SIDE + CONTENT_W - m.textX, 1);
+      ctx.fillRect(m.textX, Math.round(y + extra / 2) - 1, metrics.side + metrics.contentW - m.textX, 1);
       y += extra;
     }
   }
@@ -646,19 +753,19 @@ function drawRows(ctx: Ctx, layout: SetlistLayout, rows: PreparedRow[], ink: Ink
  * 同じ考えで、画像側の明るさとは別にここでもう一枚敷く。
  * 上下の端は文字が小さいので、濃さの指定とは無関係に常に沈めておく。
  */
-function drawScrim(ctx: Ctx, palette: Palette, strength: number): void {
+function drawScrim(ctx: Ctx, palette: Palette, strength: number, m: Metrics): void {
   if (strength > 0) {
     ctx.fillStyle = `rgba(${palette.scrim}, ${strength})`;
-    ctx.fillRect(0, 0, SETLIST_WIDTH, SETLIST_HEIGHT);
+    ctx.fillRect(0, 0, m.width, m.height);
   }
 
-  const veil = ctx.createLinearGradient(0, 0, 0, SETLIST_HEIGHT);
+  const veil = ctx.createLinearGradient(0, 0, 0, m.height);
   veil.addColorStop(0, `rgba(${palette.scrim}, 0.55)`);
   veil.addColorStop(0.22, `rgba(${palette.scrim}, 0)`);
   veil.addColorStop(0.8, `rgba(${palette.scrim}, 0)`);
   veil.addColorStop(1, `rgba(${palette.scrim}, 0.55)`);
   ctx.fillStyle = veil;
-  ctx.fillRect(0, 0, SETLIST_WIDTH, SETLIST_HEIGHT);
+  ctx.fillRect(0, 0, m.width, m.height);
 }
 
 export function renderSetlistPage(
@@ -668,10 +775,11 @@ export function renderSetlistPage(
   pageIndex: number,
   render?: RenderOptions
 ): void {
-  // バッキングストアは常に 1080x1920 固定。devicePixelRatio は掛けない
+  // バッキングストアは選んだサイズちょうど。devicePixelRatio は掛けない
   // (どの端末でも同じ PNG が出ることが要件)
-  if (canvas.width !== SETLIST_WIDTH) canvas.width = SETLIST_WIDTH;
-  if (canvas.height !== SETLIST_HEIGHT) canvas.height = SETLIST_HEIGHT;
+  const m = metricsOf(layout.options.size);
+  if (canvas.width !== m.width) canvas.width = m.width;
+  if (canvas.height !== m.height) canvas.height = m.height;
 
   const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) return;
@@ -683,39 +791,39 @@ export function renderSetlistPage(
   const ink: Ink = { palette, shadow: theme.textShadow && background !== null };
 
   ctx.fillStyle = COLOR_BG;
-  ctx.fillRect(0, 0, SETLIST_WIDTH, SETLIST_HEIGHT);
+  ctx.fillRect(0, 0, m.width, m.height);
 
   if (background) {
-    // 背景は 1080x1920 に整形済みなので等倍で貼る
-    ctx.drawImage(background, 0, 0, SETLIST_WIDTH, SETLIST_HEIGHT);
-    drawScrim(ctx, palette, theme.scrim);
+    // 背景は同じサイズに整形済みなので等倍で貼る
+    ctx.drawImage(background, 0, 0, m.width, m.height);
+    drawScrim(ctx, palette, theme.scrim, m);
   }
 
   ctx.textBaseline = 'alphabetic';
   endText(ctx);
 
-  drawHeader(ctx, model, layout, ink);
+  drawHeader(ctx, model, layout, ink, m);
 
   const rows = layout.pages[pageIndex] ?? [];
   if (rows.length === 0) {
     beginText(ctx, ink);
     ctx.textAlign = 'left';
     ctx.fillStyle = palette.muted;
-    ctx.font = font(400, 28, MONO);
+    ctx.font = font(400, 28 * m.unit, MONO);
     const label = 'NO TRACKS';
     drawTracked(
       ctx,
       label,
-      (SETLIST_WIDTH - trackedWidth(ctx, label, 4)) / 2,
-      (layout.header.tracksTop + TRACKS_BOTTOM) / 2,
-      4
+      (m.width - trackedWidth(ctx, label, 4 * m.unit)) / 2,
+      (layout.header.tracksTop + m.tracksBottom) / 2,
+      4 * m.unit
     );
     endText(ctx);
   } else {
-    drawRows(ctx, layout, rows, ink);
+    drawRows(ctx, layout, rows, ink, m);
   }
 
-  drawFooter(ctx, pageIndex, layout.pages.length, ink);
+  drawFooter(ctx, pageIndex, layout.pages.length, ink, m);
 }
 
 /* ---------------- ファイル名 ---------------- */

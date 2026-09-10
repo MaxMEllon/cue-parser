@@ -11,12 +11,19 @@ import {
   type BackgroundSettings,
   type BackgroundSource,
 } from '@/utils/setlistBackground';
-import { DEFAULT_THEME, type SetlistTheme } from '@/utils/setlistImage';
+import {
+  DEFAULT_SETLIST_SIZE,
+  DEFAULT_THEME,
+  type SetlistSize,
+  type SetlistTheme,
+} from '@/utils/setlistImage';
 
 /** セトリ画像の見た目の設定。タブを行き来しても消えないよう CueParser が持つ */
 export interface SetlistAppearance {
   /** タイトル・アーティストのヘッダーを載せるか */
   showHeader: boolean;
+  /** 書き出すサイズ。背景の切り取りもこの縦横比に従う */
+  size: SetlistSize;
   source: BackgroundSource | null;
   settings: BackgroundSettings;
   theme: SetlistTheme;
@@ -24,6 +31,7 @@ export interface SetlistAppearance {
 
 export const DEFAULT_APPEARANCE: SetlistAppearance = {
   showHeader: false,
+  size: DEFAULT_SETLIST_SIZE,
   source: null,
   settings: DEFAULT_BACKGROUND_SETTINGS,
   theme: DEFAULT_THEME,
@@ -105,7 +113,7 @@ export default function SetlistBackgroundControls({
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
 
-  const { source, settings, theme } = appearance;
+  const { source, settings, theme, size } = appearance;
 
   const patchSettings = (patch: Partial<BackgroundSettings>) =>
     onChange({ ...appearance, settings: { ...settings, ...patch } });
@@ -121,7 +129,8 @@ export default function SetlistBackgroundControls({
       ...appearance,
       settings: clampBackgroundSettings(
         { ...settings, zoom, offsetX: settings.offsetX * ratio, offsetY: settings.offsetY * ratio },
-        source
+        source,
+        size
       ),
     });
   };
@@ -142,7 +151,7 @@ export default function SetlistBackgroundControls({
       onChange({
         ...appearance,
         source: next,
-        settings: clampBackgroundSettings(settings, next),
+        settings: clampBackgroundSettings(settings, next, size),
       });
     } catch {
       setError('画像を読み込めませんでした。');
