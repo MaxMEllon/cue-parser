@@ -31,8 +31,12 @@ export interface BackgroundSettings {
   saturation: number;
   /** ぼかし半径(1080 幅基準の px)。0 〜 24 */
   blur: number;
-  /** cover したときの縦の見せ位置。0 = 上端、1 = 下端 */
-  focusY: number;
+  /** cover を 1 とした拡大率。1 〜 ZOOM_MAX */
+  zoom: number;
+  /** 横のずらし。画面の幅を 1 とした量(正 = 画像を右へ) */
+  offsetX: number;
+  /** 縦のずらし。画面の高さを 1 とした量(正 = 画像を下へ) */
+  offsetY: number;
   /** 網点にする(サイトの背景と同じ作法) */
   halftone: boolean;
 }
@@ -42,9 +46,17 @@ export const DEFAULT_BACKGROUND_SETTINGS: BackgroundSettings = {
   contrast: 1.0,
   saturation: 0.15,
   blur: 0,
-  focusY: 0.5,
+  // 1.00x は画面ぴったり(cover)で、短い辺の方向には 1px も動かせない。
+  // 9:16 の画像だと上下左右どちらにも動かず「掴めない」ように見えるので、
+  // 最初から少し余らせておく
+  zoom: 1.15,
+  offsetX: 0,
+  offsetY: 0,
   halftone: false,
 };
+
+export const ZOOM_MIN = 1;
+export const ZOOM_MAX = 4;
 
 export interface BackgroundSource {
   image: CanvasImageSource;
@@ -107,24 +119,66 @@ export async function loadImageSource(file: File): Promise<BackgroundSource> {
   }
 }
 
-/* ---------------- cover 合わせ ---------------- */
+/* ---------------- 位置合わせ ---------------- */
 
-/** 1080x1920 を埋めるように拡大したときの、テクスチャ座標の倍率とずらし */
-function coverUv(
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+/** 1080x1920 を埋める倍率(cover)に、拡大率を掛けたもの */
+function drawnSize(source: BackgroundSource, zoom: number): { width: number; height: number } {
+  const cover = Math.max(BACKGROUND_WIDTH / source.width, BACKGROUND_HEIGHT / source.height);
+  const scale = cover * clamp(zoom, ZOOM_MIN, ZOOM_MAX);
+  return { width: source.width * scale, height: source.height * scale };
+}
+
+/**
+ * ずらせる限界。画面からはみ出した分の半分までで、
+ * これを超えると地の黒が覗いてしまう。
+ * 単位は画面の幅・高さを 1 とした量。
+ */
+export function panLimits(
   source: BackgroundSource,
-  focusY: number
-): { scale: [number, number]; offset: [number, number] } {
-  const scale = Math.max(BACKGROUND_WIDTH / source.width, BACKGROUND_HEIGHT / source.height);
-  const drawnWidth = source.width * scale;
-  const drawnHeight = source.height * scale;
+  zoom: number
+): { x: number; y: number } {
+  const drawn = drawnSize(source, zoom);
+  return {
+    x: Math.max(0, (drawn.width - BACKGROUND_WIDTH) / (2 * BACKGROUND_WIDTH)),
+    y: Math.max(0, (drawn.height - BACKGROUND_HEIGHT) / (2 * BACKGROUND_HEIGHT)),
+  };
+}
 
-  const uScale = BACKGROUND_WIDTH / drawnWidth;
-  const vScale = BACKGROUND_HEIGHT / drawnHeight;
+/** 拡大率とずらしを、隙間が空かない範囲に収める */
+export function clampBackgroundSettings(
+  settings: BackgroundSettings,
+  source: BackgroundSource
+): BackgroundSettings {
+  const zoom = clamp(settings.zoom, ZOOM_MIN, ZOOM_MAX);
+  const limits = panLimits(source, zoom);
 
   return {
+    ...settings,
+    zoom,
+    offsetX: clamp(settings.offsetX, -limits.x, limits.x),
+    offsetY: clamp(settings.offsetY, -limits.y, limits.y),
+  };
+}
+
+/** テクスチャ座標の倍率とずらし */
+function coverUv(
+  source: BackgroundSource,
+  settings: BackgroundSettings
+): { scale: [number, number]; offset: [number, number] } {
+  const drawn = drawnSize(source, settings.zoom);
+  const uScale = BACKGROUND_WIDTH / drawn.width;
+  const vScale = BACKGROUND_HEIGHT / drawn.height;
+
+  // 画像を右(下)へずらすほど、切り取る窓は左(上)へ動く。
+  // 縦はシェーダ側で上下を反転してから引くので、横と同じ向きで書ける
+  return {
     scale: [uScale, vScale],
-    // シェーダ側で上下を反転してから引くので、focusY は上から測ったままで良い
-    offset: [(1 - uScale) / 2, (1 - vScale) * focusY],
+    offset: [
+      (1 - uScale) / 2 - settings.offsetX * uScale,
+      (1 - vScale) / 2 - settings.offsetY * vScale,
+    ],
   };
 }
 
@@ -305,14 +359,12 @@ function render2d(
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, BACKGROUND_WIDTH, BACKGROUND_HEIGHT);
 
-  // ぼかすと縁が透けるので、その分だけ大きめに貼る
+  const drawn = drawnSize(source, settings.zoom);
+  // ぼかすと縁が透けるので、その分だけ画面中央を軸に大きめに貼る
   const overscan = withFilter ? settings.blur * 3 : 0;
-  const scale = Math.max(
-    (BACKGROUND_WIDTH + overscan * 2) / source.width,
-    (BACKGROUND_HEIGHT + overscan * 2) / source.height
-  );
-  const drawnWidth = source.width * scale;
-  const drawnHeight = source.height * scale;
+  const grow = 1 + (overscan * 2) / Math.min(BACKGROUND_WIDTH, BACKGROUND_HEIGHT);
+  const drawnWidth = drawn.width * grow;
+  const drawnHeight = drawn.height * grow;
 
   if (withFilter) {
     ctx.filter = [
@@ -325,8 +377,8 @@ function render2d(
 
   ctx.drawImage(
     source.image,
-    (BACKGROUND_WIDTH - drawnWidth) / 2,
-    (BACKGROUND_HEIGHT - drawnHeight) * settings.focusY,
+    (BACKGROUND_WIDTH - drawnWidth) / 2 + settings.offsetX * BACKGROUND_WIDTH,
+    (BACKGROUND_HEIGHT - drawnHeight) / 2 + settings.offsetY * BACKGROUND_HEIGHT,
     drawnWidth,
     drawnHeight
   );
@@ -492,7 +544,7 @@ export function createBackgroundRenderer(): BackgroundRenderer {
     settings: BackgroundSettings
   ): void => {
     uploadSource(context, source);
-    const { scale, offset } = coverUv(source, settings.focusY);
+    const { scale, offset } = coverUv(source, settings);
     const identity: [number, number] = [1, 1];
     const zero: [number, number] = [0, 0];
 

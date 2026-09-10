@@ -492,12 +492,6 @@
     outline-offset: 4px;
   }
 
-  /* 画像をドラッグしている間だけ枠を立てる。dropzone と同じ見せ方 */
-  .panel-inset[data-drag='active'] {
-    border-color: var(--border-strong);
-    background: var(--raised);
-  }
-
   /* セトリ画像のプレビュー。実体は 1080x1920 の canvas なので、
      縮小は CSS に任せる(image-rendering は既定のまま。縮小で pixelated にすると罫線が潰れる) */
   .setlist-canvas {
@@ -508,6 +502,17 @@
     border: 1px solid var(--border);
     border-radius: 2px;
     background: #000;
+  }
+
+  /* 背景画像があるときだけ、掴んで動かせることを見た目で示す。
+     touch-action を切らないと、指のドラッグがページのスクロールに持っていかれる */
+  .setlist-canvas[data-pan] {
+    touch-action: none;
+    cursor: grab;
+  }
+
+  .setlist-canvas[data-pan='active'] {
+    cursor: grabbing;
   }
 
   /* 結果が出るまでの受け皿 */

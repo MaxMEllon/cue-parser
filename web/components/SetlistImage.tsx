@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { CueSheet } from '@maxmellon/cue-parser';
 import {
   SETLIST_HEIGHT,
@@ -12,7 +13,14 @@ import {
   setlistFileName,
   type RenderOptions,
 } from '@/utils/setlistImage';
-import { getBackgroundRenderer, type BackgroundRenderer } from '@/utils/setlistBackground';
+import {
+  ZOOM_MAX,
+  ZOOM_MIN,
+  clampBackgroundSettings,
+  getBackgroundRenderer,
+  type BackgroundRenderer,
+  type BackgroundSettings,
+} from '@/utils/setlistBackground';
 import SetlistBackgroundControls, { type SetlistAppearance } from '@/components/SetlistBackgroundControls';
 
 /** canvas を PNG の Blob にする */
@@ -79,6 +87,141 @@ export default function SetlistImage({
     () => ({ theme: appearance.theme, background: backgroundFrame?.canvas ?? null }),
     [appearance.theme, backgroundFrame]
   );
+
+  /* --- プレビュー上での位置合わせ ---
+     ドラッグで移動、ホイール(指なら 2 本でつまむ)で拡大縮小。
+     ポインタが動くたびに親へ state を返すと、トラック一覧まで巻き込んで
+     React が再描画されるので、rAF で 1 フレームに 1 回だけ返す */
+  const appearanceRef = useRef(appearance);
+  const flushRef = useRef<number | null>(null);
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
+
+  useEffect(() => {
+    appearanceRef.current = appearance;
+  }, [appearance]);
+
+  const pushSettings = useCallback(
+    (settings: BackgroundSettings) => {
+      const current = appearanceRef.current;
+      if (!current.source) return;
+
+      appearanceRef.current = {
+        ...current,
+        settings: clampBackgroundSettings(settings, current.source),
+      };
+
+      if (flushRef.current !== null) return;
+      flushRef.current = requestAnimationFrame(() => {
+        flushRef.current = null;
+        onAppearanceChange(appearanceRef.current);
+      });
+    },
+    [onAppearanceChange]
+  );
+
+  /** 画面上の一点を掴んだまま拡大率だけ変える */
+  const zoomAt = useCallback(
+    (zoom: number, originX: number, originY: number) => {
+      const { settings } = appearanceRef.current;
+      const ratio = zoom / settings.zoom;
+
+      pushSettings({
+        ...settings,
+        zoom,
+        offsetX: originX - 0.5 - ratio * (originX - 0.5 - settings.offsetX),
+        offsetY: originY - 0.5 - ratio * (originY - 0.5 - settings.offsetY),
+      });
+    },
+    [pushSettings]
+  );
+
+  /** プレビューの表示サイズを 1 とした座標に直す */
+  const toLocal = (event: { clientX: number; clientY: number }) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return null;
+    return { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!appearance.source) return;
+    try {
+      // 既に離されたポインタだと投げる。掴めなくても移動自体は続けられる
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      /* noop */
+    }
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    pinchRef.current = null;
+    setIsPanning(true);
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const pointers = pointersRef.current;
+    if (!appearance.source || !pointers.has(event.pointerId)) return;
+
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return;
+
+    const previous = pointers.get(event.pointerId)!;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (pointers.size >= 2) {
+      // 2 本指: 間隔の比をそのまま拡大率に、中点を軸にする
+      const [a, b] = Array.from(pointers.values());
+      const distance = Math.hypot(a.x - b.x, a.y - b.y);
+      if (!pinchRef.current) {
+        pinchRef.current = { distance, zoom: appearanceRef.current.settings.zoom };
+        return;
+      }
+      if (pinchRef.current.distance <= 0) return;
+
+      zoomAt(
+        pinchRef.current.zoom * (distance / pinchRef.current.distance),
+        ((a.x + b.x) / 2 - rect.left) / rect.width,
+        ((a.y + b.y) / 2 - rect.top) / rect.height
+      );
+      return;
+    }
+
+    const { settings } = appearanceRef.current;
+    pushSettings({
+      ...settings,
+      offsetX: settings.offsetX + (event.clientX - previous.x) / rect.width,
+      offsetY: settings.offsetY + (event.clientY - previous.y) / rect.height,
+    });
+  };
+
+  const handlePointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    pointersRef.current.delete(event.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size === 0) setIsPanning(false);
+  };
+
+  // ホイールは React 経由だと passive で付くので preventDefault が効かない。
+  // ページごとスクロールしてしまうため、自前で non-passive に張る
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !appearance.source) return;
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const local = toLocal(event);
+      if (!local) return;
+
+      const { zoom } = appearanceRef.current.settings;
+      const next = Math.min(Math.max(zoom * Math.exp(-event.deltaY * 0.0015), ZOOM_MIN), ZOOM_MAX);
+      if (next !== zoom) zoomAt(next, local.x, local.y);
+    };
+
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [appearance.source, zoomAt]);
+
+  useEffect(() => () => {
+    if (flushRef.current !== null) cancelAnimationFrame(flushRef.current);
+  }, []);
 
   const model = useMemo(() => buildSetlistModel(cueSheet), [cueSheet]);
 
@@ -219,6 +362,11 @@ export default function SetlistImage({
           width={SETLIST_WIDTH}
           height={SETLIST_HEIGHT}
           className="setlist-canvas"
+          data-pan={appearance.source ? (isPanning ? 'active' : 'ready') : undefined}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
           aria-label="セトリ画像のプレビュー"
           role="img"
         />
