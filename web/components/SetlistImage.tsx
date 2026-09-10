@@ -4,14 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { CueSheet } from '@maxmellon/cue-parser';
 import {
-  SETLIST_HEIGHT,
-  SETLIST_WIDTH,
+  SETLIST_SIZES,
   buildSetlistModel,
   createMeasureContext,
   planSetlistLayout,
   renderSetlistPage,
   setlistFileName,
   type RenderOptions,
+  type SetlistSize,
 } from '@/utils/setlistImage';
 import {
   ZOOM_MAX,
@@ -78,10 +78,10 @@ export default function SetlistImage({
     }
 
     const frame = requestAnimationFrame(() => {
-      setBackgroundFrame(renderer.render(appearance.source!, appearance.settings));
+      setBackgroundFrame(renderer.render(appearance.source!, appearance.settings, appearance.size));
     });
     return () => cancelAnimationFrame(frame);
-  }, [renderer, appearance.source, appearance.settings]);
+  }, [renderer, appearance.source, appearance.settings, appearance.size]);
 
   const renderOptions = useMemo<RenderOptions>(
     () => ({ theme: appearance.theme, background: backgroundFrame?.canvas ?? null }),
@@ -109,7 +109,7 @@ export default function SetlistImage({
 
       appearanceRef.current = {
         ...current,
-        settings: clampBackgroundSettings(settings, current.source),
+        settings: clampBackgroundSettings(settings, current.source, current.size),
       };
 
       if (flushRef.current !== null) return;
@@ -227,8 +227,29 @@ export default function SetlistImage({
 
   const layout = useMemo(() => {
     const ctx = createMeasureContext();
-    return ctx ? planSetlistLayout(ctx, model, { showHeader: appearance.showHeader }) : null;
-  }, [model, appearance.showHeader]);
+    return ctx
+      ? planSetlistLayout(ctx, model, { showHeader: appearance.showHeader, size: appearance.size })
+      : null;
+  }, [model, appearance.showHeader, appearance.size]);
+
+  /** 縦横比が変わると背景のずらし量が限界を超えるので、切り替えと同時に詰め直す */
+  const handleSizeChange = useCallback(
+    (size: SetlistSize) => {
+      const current = appearanceRef.current;
+      if (size.id === current.size.id) return;
+
+      const next: SetlistAppearance = {
+        ...current,
+        size,
+        settings: current.source
+          ? clampBackgroundSettings(current.settings, current.source, size)
+          : current.settings,
+      };
+      appearanceRef.current = next;
+      onAppearanceChange(next);
+    },
+    [onAppearanceChange]
+  );
 
   const pageCount = layout?.pages.length ?? 1;
 
@@ -318,15 +339,31 @@ export default function SetlistImage({
       </div>
 
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <label className="hint flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={appearance.showHeader}
-            onChange={(e) => onAppearanceChange({ ...appearance, showHeader: e.target.checked })}
-            className="accent-fg"
-          />
-          タイトル・アーティストを載せる
-        </label>
+        <div className="flex items-center gap-3 flex-wrap">
+          <label className="hint flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={appearance.showHeader}
+              onChange={(e) => onAppearanceChange({ ...appearance, showHeader: e.target.checked })}
+              className="accent-fg"
+            />
+            タイトル・アーティストを載せる
+          </label>
+
+          <div className="flex items-center gap-2">
+            <span className="label">サイズ</span>
+            {SETLIST_SIZES.map((size) => (
+              <button
+                key={size.id}
+                onClick={() => handleSizeChange(size)}
+                data-active={size.id === appearance.size.id}
+                className={size.id === appearance.size.id ? 'btn btn-primary' : 'btn'}
+              >
+                {size.width} × {size.height}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {pageCount > 1 && (
           <div className="flex items-center gap-2">
@@ -359,8 +396,8 @@ export default function SetlistImage({
       <div className="panel-inset p-4 flex justify-center">
         <canvas
           ref={canvasRef}
-          width={SETLIST_WIDTH}
-          height={SETLIST_HEIGHT}
+          width={appearance.size.width}
+          height={appearance.size.height}
           className="setlist-canvas"
           data-pan={appearance.source ? (isPanning ? 'active' : 'ready') : undefined}
           onPointerDown={handlePointerDown}
@@ -373,7 +410,7 @@ export default function SetlistImage({
       </div>
 
       <p className="hint mt-3">
-        {SETLIST_WIDTH} × {SETLIST_HEIGHT} · Instagram / TikTok ストーリー向け
+        {appearance.size.width} × {appearance.size.height} · {appearance.size.note}
         {pageCount > 1 && ` · 曲数が多いため ${pageCount} 枚に分割しています`}
       </p>
     </div>

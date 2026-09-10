@@ -1,7 +1,7 @@
 /**
  * セトリ画像の背景に敷く写真の加工。
  *
- * 1080x1920 の canvas を 1 枚だけ持ち回して、そこに加工済みの背景を焼く。
+ * canvas を 1 枚だけ持ち回して、そこに出力サイズちょうどの加工済み背景を焼く。
  * 文字は setlistImage.ts が 2D で描くので、ここは「背景を作るところ」までしか受け持たない。
  *
  * 加工は WebGL(GLSL)で行う。Canvas 2D の ctx.filter は Safari 18 未満で丸ごと効かず、
@@ -12,15 +12,23 @@
  * components/ShaderBackground.tsx に倣っている。
  */
 
-export const BACKGROUND_WIDTH = 1080;
-export const BACKGROUND_HEIGHT = 1920;
+/** 焼き上げる大きさ。setlistImage.ts の SetlistSize から幅と高さだけを受け取る */
+export interface BackgroundSize {
+  width: number;
+  height: number;
+}
 
-/** ぼかしを掛けるときの中間バッファ。半分に落としてから掛けるので、少ないタップで半径を稼げる */
-const BLUR_WIDTH = BACKGROUND_WIDTH / 2;
-const BLUR_HEIGHT = BACKGROUND_HEIGHT / 2;
+/** ぼかし半径・網点の間隔はこの幅での px。実際の幅との比を掛けて使う */
+const BASE_WIDTH = 1080;
 
 /** 網点の格子の間隔(px)。ShaderBackground.tsx の CELL_CSS_PX と同じ狙い */
 const HALFTONE_CELL = 7;
+
+/** ぼかしを掛けるときの中間バッファ。半分に落としてから掛けるので、少ないタップで半径を稼げる */
+const blurSize = (size: BackgroundSize) => ({
+  width: Math.max(1, Math.round(size.width / 2)),
+  height: Math.max(1, Math.round(size.height / 2)),
+});
 
 export interface BackgroundSettings {
   /** 明るさ。0.2 〜 1.6 */
@@ -29,7 +37,7 @@ export interface BackgroundSettings {
   contrast: number;
   /** 彩度。0 = 完全モノクロ、1 = 元のまま */
   saturation: number;
-  /** ぼかし半径(1080 幅基準の px)。0 〜 24 */
+  /** ぼかし半径(基準幅での px)。0 〜 24 */
   blur: number;
   /** cover を 1 とした拡大率。1 〜 ZOOM_MAX */
   zoom: number;
@@ -72,7 +80,11 @@ export interface BackgroundFrame {
 }
 
 export interface BackgroundRenderer {
-  render(source: BackgroundSource, settings: BackgroundSettings): BackgroundFrame | null;
+  render(
+    source: BackgroundSource,
+    settings: BackgroundSettings,
+    size: BackgroundSize
+  ): BackgroundFrame | null;
   /** WebGL で描けているか */
   readonly usesWebGL: boolean;
   /** ぼかし・彩度・コントラストが実際に効くか(2D フォールバックで ctx.filter も無いと false) */
@@ -123,9 +135,13 @@ export async function loadImageSource(file: File): Promise<BackgroundSource> {
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
-/** 1080x1920 を埋める倍率(cover)に、拡大率を掛けたもの */
-function drawnSize(source: BackgroundSource, zoom: number): { width: number; height: number } {
-  const cover = Math.max(BACKGROUND_WIDTH / source.width, BACKGROUND_HEIGHT / source.height);
+/** 画面を埋める倍率(cover)に、拡大率を掛けたもの */
+function drawnSize(
+  source: BackgroundSource,
+  zoom: number,
+  size: BackgroundSize
+): { width: number; height: number } {
+  const cover = Math.max(size.width / source.width, size.height / source.height);
   const scale = cover * clamp(zoom, ZOOM_MIN, ZOOM_MAX);
   return { width: source.width * scale, height: source.height * scale };
 }
@@ -137,22 +153,24 @@ function drawnSize(source: BackgroundSource, zoom: number): { width: number; hei
  */
 export function panLimits(
   source: BackgroundSource,
-  zoom: number
+  zoom: number,
+  size: BackgroundSize
 ): { x: number; y: number } {
-  const drawn = drawnSize(source, zoom);
+  const drawn = drawnSize(source, zoom, size);
   return {
-    x: Math.max(0, (drawn.width - BACKGROUND_WIDTH) / (2 * BACKGROUND_WIDTH)),
-    y: Math.max(0, (drawn.height - BACKGROUND_HEIGHT) / (2 * BACKGROUND_HEIGHT)),
+    x: Math.max(0, (drawn.width - size.width) / (2 * size.width)),
+    y: Math.max(0, (drawn.height - size.height) / (2 * size.height)),
   };
 }
 
 /** 拡大率とずらしを、隙間が空かない範囲に収める */
 export function clampBackgroundSettings(
   settings: BackgroundSettings,
-  source: BackgroundSource
+  source: BackgroundSource,
+  size: BackgroundSize
 ): BackgroundSettings {
   const zoom = clamp(settings.zoom, ZOOM_MIN, ZOOM_MAX);
-  const limits = panLimits(source, zoom);
+  const limits = panLimits(source, zoom, size);
 
   return {
     ...settings,
@@ -165,11 +183,12 @@ export function clampBackgroundSettings(
 /** テクスチャ座標の倍率とずらし */
 function coverUv(
   source: BackgroundSource,
-  settings: BackgroundSettings
+  settings: BackgroundSettings,
+  size: BackgroundSize
 ): { scale: [number, number]; offset: [number, number] } {
-  const drawn = drawnSize(source, settings.zoom);
-  const uScale = BACKGROUND_WIDTH / drawn.width;
-  const vScale = BACKGROUND_HEIGHT / drawn.height;
+  const drawn = drawnSize(source, settings.zoom, size);
+  const uScale = size.width / drawn.width;
+  const vScale = size.height / drawn.height;
 
   // 画像を右(下)へずらすほど、切り取る窓は左(上)へ動く。
   // 縦はシェーダ側で上下を反転してから引くので、横と同じ向きで書ける
@@ -365,25 +384,28 @@ function render2d(
   canvas: HTMLCanvasElement,
   source: BackgroundSource,
   settings: BackgroundSettings,
-  withFilter: boolean
+  withFilter: boolean,
+  size: BackgroundSize
 ): void {
   const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) return;
 
   ctx.filter = 'none';
   ctx.fillStyle = '#000000';
-  ctx.fillRect(0, 0, BACKGROUND_WIDTH, BACKGROUND_HEIGHT);
+  ctx.fillRect(0, 0, size.width, size.height);
 
-  const drawn = drawnSize(source, settings.zoom);
+  const drawn = drawnSize(source, settings.zoom, size);
+  // ぼかし半径は基準幅での px なので、実寸に合わせて伸ばす
+  const blur = settings.blur * (size.width / BASE_WIDTH);
   // ぼかすと縁が透けるので、その分だけ画面中央を軸に大きめに貼る
-  const overscan = withFilter ? settings.blur * 3 : 0;
-  const grow = 1 + (overscan * 2) / Math.min(BACKGROUND_WIDTH, BACKGROUND_HEIGHT);
+  const overscan = withFilter ? blur * 3 : 0;
+  const grow = 1 + (overscan * 2) / Math.min(size.width, size.height);
   const drawnWidth = drawn.width * grow;
   const drawnHeight = drawn.height * grow;
 
   if (withFilter) {
     ctx.filter = [
-      `blur(${settings.blur}px)`,
+      `blur(${blur}px)`,
       `saturate(${Math.round(settings.saturation * 100)}%)`,
       `contrast(${settings.contrast})`,
       `brightness(${settings.brightness})`,
@@ -392,8 +414,8 @@ function render2d(
 
   ctx.drawImage(
     source.image,
-    (BACKGROUND_WIDTH - drawnWidth) / 2 + settings.offsetX * BACKGROUND_WIDTH,
-    (BACKGROUND_HEIGHT - drawnHeight) / 2 + settings.offsetY * BACKGROUND_HEIGHT,
+    (size.width - drawnWidth) / 2 + settings.offsetX * size.width,
+    (size.height - drawnHeight) / 2 + settings.offsetY * size.height,
     drawnWidth,
     drawnHeight
   );
@@ -404,7 +426,7 @@ function render2d(
     const dim = Math.max(0, 1 - settings.brightness);
     if (dim > 0) {
       ctx.fillStyle = `rgba(0, 0, 0, ${dim})`;
-      ctx.fillRect(0, 0, BACKGROUND_WIDTH, BACKGROUND_HEIGHT);
+      ctx.fillRect(0, 0, size.width, size.height);
     }
   }
 }
@@ -421,12 +443,9 @@ export function getBackgroundRenderer(): BackgroundRenderer {
 }
 
 function createCanvas(): HTMLCanvasElement {
-  const canvas = document.createElement('canvas');
-  // バッキングストアは 1080x1920 固定。devicePixelRatio は掛けない
+  // バッキングストアは焼くときに出力サイズちょうどへ合わせる。devicePixelRatio は掛けない
   // (どの端末でも同じ PNG が出ることが要件)
-  canvas.width = BACKGROUND_WIDTH;
-  canvas.height = BACKGROUND_HEIGHT;
-  return canvas;
+  return document.createElement('canvas');
 }
 
 export function createBackgroundRenderer(): BackgroundRenderer {
@@ -448,7 +467,9 @@ export function createBackgroundRenderer(): BackgroundRenderer {
   let blurProgram: LinkedProgram | null = null;
   let buffer: WebGLBuffer | null = null;
   let sourceTexture: WebGLTexture | null = null;
+  // ぼかし用の中間バッファ。出力サイズが変わったら作り直す
   let targets: [RenderTarget, RenderTarget] | null = null;
+  let targetSize: BackgroundSize = { width: 0, height: 0 };
   let uploadedImage: CanvasImageSource | null = null;
 
   const setupGl = (context: WebGLRenderingContext): boolean => {
@@ -488,13 +509,35 @@ export function createBackgroundRenderer(): BackgroundRenderer {
       context.vertexAttribPointer(position, 2, context.FLOAT, false, 0, 0);
     }
 
-    const first = createTarget(context, BLUR_WIDTH, BLUR_HEIGHT);
-    const second = createTarget(context, BLUR_WIDTH, BLUR_HEIGHT);
-    if (!first || !second) return false;
-    targets = [first, second];
-
     sourceTexture = createTexture(context);
     return sourceTexture !== null;
+  };
+
+  /** 中間バッファを今の出力サイズに合わせる。作れなければぼかしを諦める(null を返す) */
+  const ensureTargets = (
+    context: WebGLRenderingContext,
+    size: BackgroundSize
+  ): [RenderTarget, RenderTarget] | null => {
+    const half = blurSize(size);
+    if (targets && targetSize.width === half.width && targetSize.height === half.height) {
+      return targets;
+    }
+
+    if (targets) {
+      for (const target of targets) {
+        context.deleteFramebuffer(target.framebuffer);
+        context.deleteTexture(target.texture);
+      }
+      targets = null;
+    }
+
+    const first = createTarget(context, half.width, half.height);
+    const second = createTarget(context, half.width, half.height);
+    if (!first || !second) return null;
+
+    targets = [first, second];
+    targetSize = half;
+    return targets;
   };
 
   const ready = gl !== null && setupGl(gl);
@@ -539,7 +582,8 @@ export function createBackgroundRenderer(): BackgroundRenderer {
     context.uniform1f(uniforms.uContrast, settings.contrast);
     context.uniform1f(uniforms.uSaturation, settings.saturation);
     context.uniform1f(uniforms.uHalftone, settings.halftone ? 1 : 0);
-    context.uniform1f(uniforms.uCell, HALFTONE_CELL);
+    // 網点の間隔も基準幅での px。大きく焼くときは点の粗さを揃えて伸ばす
+    context.uniform1f(uniforms.uCell, HALFTONE_CELL * (width / BASE_WIDTH));
     context.uniform1f(uniforms.uFlipY, flipY ? 1 : 0);
 
     context.drawArrays(context.TRIANGLES, 0, 3);
@@ -549,16 +593,17 @@ export function createBackgroundRenderer(): BackgroundRenderer {
     context: WebGLRenderingContext,
     texture: WebGLTexture,
     horizontal: boolean,
-    radius: number
+    radius: number,
+    half: BackgroundSize
   ): void => {
     const { program, uniforms } = blurProgram!;
     context.useProgram(program);
-    context.viewport(0, 0, BLUR_WIDTH, BLUR_HEIGHT);
+    context.viewport(0, 0, half.width, half.height);
 
     context.activeTexture(context.TEXTURE0);
     context.bindTexture(context.TEXTURE_2D, texture);
     context.uniform1i(uniforms.uTex, 0);
-    context.uniform2f(uniforms.uResolution, BLUR_WIDTH, BLUR_HEIGHT);
+    context.uniform2f(uniforms.uResolution, half.width, half.height);
     context.uniform2f(uniforms.uDirection, horizontal ? 1 : 0, horizontal ? 0 : 1);
     context.uniform1f(uniforms.uRadius, radius);
 
@@ -568,45 +613,40 @@ export function createBackgroundRenderer(): BackgroundRenderer {
   const renderGl = (
     context: WebGLRenderingContext,
     source: BackgroundSource,
-    settings: BackgroundSettings
+    settings: BackgroundSettings,
+    size: BackgroundSize
   ): void => {
     uploadSource(context, source);
-    const { scale, offset } = coverUv(source, settings);
+    const { scale, offset } = coverUv(source, settings, size);
     const identity: [number, number] = [1, 1];
     const zero: [number, number] = [0, 0];
+    const buffers = settings.blur > 0 ? ensureTargets(context, size) : null;
 
-    if (settings.blur <= 0 || !targets) {
+    if (!buffers) {
       context.bindFramebuffer(context.FRAMEBUFFER, null);
-      drawSample(
-        context,
-        sourceTexture!,
-        BACKGROUND_WIDTH,
-        BACKGROUND_HEIGHT,
-        scale,
-        offset,
-        settings,
-        true
-      );
+      drawSample(context, sourceTexture!, size.width, size.height, scale, offset, settings, true);
       return;
     }
 
-    const [first, second] = targets;
+    const [first, second] = buffers;
+    const halfSize = blurSize(size);
 
     // 1) 半解像度に cover で写す(色はまだ触らない)
     context.bindFramebuffer(context.FRAMEBUFFER, first.framebuffer);
     drawSample(
       context,
       sourceTexture!,
-      BLUR_WIDTH,
-      BLUR_HEIGHT,
+      halfSize.width,
+      halfSize.height,
       scale,
       offset,
       { brightness: 1, contrast: 1, saturation: 1, halftone: false },
       true
     );
 
-    // 2) 横 → 縦を必要な回数だけ往復させる。1 回で伸ばしすぎると分身が見える
-    const half = settings.blur / 2;
+    // 2) 横 → 縦を必要な回数だけ往復させる。1 回で伸ばしすぎると分身が見える。
+    //    半径は基準幅での px なので、実寸に合わせて伸ばしてから半解像度ぶんを割る
+    const half = (settings.blur * (size.width / BASE_WIDTH)) / 2;
     const iterations = half <= 4 ? 1 : half <= 9 ? 2 : 3;
     const radius = Math.max(half / (iterations * 2.4), 0.4);
 
@@ -614,39 +654,35 @@ export function createBackgroundRenderer(): BackgroundRenderer {
     let write = second;
     for (let i = 0; i < iterations; i++) {
       context.bindFramebuffer(context.FRAMEBUFFER, write.framebuffer);
-      drawBlur(context, read.texture, true, radius);
+      drawBlur(context, read.texture, true, radius, halfSize);
       [read, write] = [write, read];
 
       context.bindFramebuffer(context.FRAMEBUFFER, write.framebuffer);
-      drawBlur(context, read.texture, false, radius);
+      drawBlur(context, read.texture, false, radius, halfSize);
       [read, write] = [write, read];
     }
 
     // 3) 画面に戻して色を作る
     context.bindFramebuffer(context.FRAMEBUFFER, null);
-    drawSample(
-      context,
-      read.texture,
-      BACKGROUND_WIDTH,
-      BACKGROUND_HEIGHT,
-      identity,
-      zero,
-      settings,
-      false
-    );
+    drawSample(context, read.texture, size.width, size.height, identity, zero, settings, false);
   };
 
   return {
     usesWebGL: ready,
     supportsFilters: ready || filterSupport,
 
-    render(source, settings) {
+    render(source, settings, size) {
       if (source.width <= 0 || source.height <= 0) return null;
+      if (size.width <= 0 || size.height <= 0) return null;
+
+      // サイズを変えると WebGL の描画バッファは捨てられるが、この直後に必ず描き直す
+      if (canvas.width !== size.width) canvas.width = size.width;
+      if (canvas.height !== size.height) canvas.height = size.height;
 
       if (ready && gl) {
-        renderGl(gl, source, settings);
+        renderGl(gl, source, settings, size);
       } else {
-        render2d(canvas, source, settings, filterSupport);
+        render2d(canvas, source, settings, filterSupport, size);
       }
       return { canvas };
     },
@@ -663,6 +699,7 @@ export function createBackgroundRenderer(): BackgroundRenderer {
           gl.deleteTexture(target.texture);
         }
       }
+      targetSize = { width: 0, height: 0 };
       // loseContext() は呼ばない。getContext は同じ canvas に同じコンテキストを返すので、
       // ここで失わせると StrictMode / HMR の再マウントで二度と復帰しなくなる
       sampleProgram = null;
