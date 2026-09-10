@@ -2,7 +2,7 @@
 
 A TypeScript library for parsing CUE sheet files according to the [CUE Sheet specification](https://wyday.com/cuesharp/specification.php).
 
-🌐 **[Live Demo](https://maxmellon.github.io/cue-parser/)** - Try the CUE parser online!
+🌐 **[Live Demo](https://melocil.de/cue-parser/)** - Try the CUE parser online!
 
 ## Features
 
