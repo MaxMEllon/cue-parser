@@ -58,7 +58,9 @@ export default function SetlistImage({
   onAppearanceChange: (next: SetlistAppearance) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const zoomCanvasRef = useRef<HTMLCanvasElement>(null);
   const [page, setPage] = useState(0);
+  const [isZoomed, setIsZoomed] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [copySupported, setCopySupported] = useState(true);
   const [renderer, setRenderer] = useState<BackgroundRenderer | null>(null);
@@ -137,10 +139,10 @@ export default function SetlistImage({
     [pushSettings]
   );
 
-  /** プレビューの表示サイズを 1 とした座標に直す */
-  const toLocal = (event: { clientX: number; clientY: number }) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect || rect.width === 0 || rect.height === 0) return null;
+  /** プレビューの表示サイズを 1 とした座標に直す。拡大側の canvas でも使う */
+  const toLocal = (event: { clientX: number; clientY: number }, element: HTMLElement) => {
+    const rect = element.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
     return { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
   };
 
@@ -161,8 +163,8 @@ export default function SetlistImage({
     const pointers = pointersRef.current;
     if (!appearance.source || !pointers.has(event.pointerId)) return;
 
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect || rect.width === 0 || rect.height === 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
 
     const previous = pointers.get(event.pointerId)!;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -202,12 +204,15 @@ export default function SetlistImage({
   // ホイールは React 経由だと passive で付くので preventDefault が効かない。
   // ページごとスクロールしてしまうため、自前で non-passive に張る
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !appearance.source) return;
+    if (!appearance.source) return;
+
+    const canvases = [canvasRef.current, zoomCanvasRef.current].filter(
+      (canvas): canvas is HTMLCanvasElement => canvas !== null
+    );
 
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      const local = toLocal(event);
+      const local = toLocal(event, event.currentTarget as HTMLCanvasElement);
       if (!local) return;
 
       const { zoom } = appearanceRef.current.settings;
@@ -215,9 +220,11 @@ export default function SetlistImage({
       if (next !== zoom) zoomAt(next, local.x, local.y);
     };
 
-    canvas.addEventListener('wheel', onWheel, { passive: false });
-    return () => canvas.removeEventListener('wheel', onWheel);
-  }, [appearance.source, zoomAt]);
+    for (const canvas of canvases) canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      for (const canvas of canvases) canvas.removeEventListener('wheel', onWheel);
+    };
+  }, [appearance.source, zoomAt, isZoomed]);
 
   useEffect(() => () => {
     if (flushRef.current !== null) cancelAnimationFrame(flushRef.current);
@@ -260,14 +267,18 @@ export default function SetlistImage({
 
   // 編集のたびに再描画されるので、rAF で 1 フレームにまとめる
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !layout) return;
+    if (!layout) return;
 
+    const index = Math.min(page, layout.pages.length - 1);
     const frame = requestAnimationFrame(() => {
-      renderSetlistPage(canvas, model, layout, Math.min(page, layout.pages.length - 1), renderOptions);
+      // 拡大プレビューを開いている間は 2 枚に同じ絵を描く。
+      // 書き出しは常にページ内の canvas から取るので、こちらが消えても困らない
+      for (const canvas of [canvasRef.current, zoomCanvasRef.current]) {
+        if (canvas) renderSetlistPage(canvas, model, layout, index, renderOptions);
+      }
     });
     return () => cancelAnimationFrame(frame);
-  }, [model, layout, page, renderOptions]);
+  }, [model, layout, page, renderOptions, isZoomed]);
 
   const handleDownload = useCallback(async () => {
     const canvas = canvasRef.current;
@@ -299,6 +310,33 @@ export default function SetlistImage({
     }
   }, [layout, model, renderOptions]);
 
+  /* 拡大プレビューを閉じるときは、掴んだままだったポインタを捨てる。
+     canvas ごと消えると pointerup が飛んでこないので、自前で畳む */
+  const closeZoom = useCallback(() => {
+    pointersRef.current.clear();
+    pinchRef.current = null;
+    setIsPanning(false);
+    setIsZoomed(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isZoomed) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeZoom();
+    };
+    document.addEventListener('keydown', onKeyDown);
+
+    // 背面がスクロールすると、拡大中に見ている位置が分からなくなる
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = overflow;
+    };
+  }, [isZoomed, closeZoom]);
+
   const handleCopy = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas || !canCopyImage()) return;
@@ -313,11 +351,26 @@ export default function SetlistImage({
     setTimeout(() => setCopyStatus('idle'), 2000);
   }, []);
 
+  // ページ内と拡大プレビューで同じ canvas を 2 枚出すので、属性はまとめて持つ
+  const previewProps = {
+    width: appearance.size.width,
+    height: appearance.size.height,
+    'data-pan': appearance.source ? (isPanning ? 'active' : 'ready') : undefined,
+    onPointerDown: handlePointerDown,
+    onPointerMove: handlePointerMove,
+    onPointerUp: handlePointerUp,
+    onPointerCancel: handlePointerUp,
+    role: 'img',
+  } as const;
+
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <h3 className="section-title">セトリ画像</h3>
         <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={() => setIsZoomed(true)} className="btn">
+            プレビュー
+          </button>
           <button
             onClick={handleCopy}
             disabled={!copySupported}
@@ -396,16 +449,9 @@ export default function SetlistImage({
       <div className="panel-inset p-4 flex justify-center">
         <canvas
           ref={canvasRef}
-          width={appearance.size.width}
-          height={appearance.size.height}
           className="setlist-canvas"
-          data-pan={appearance.source ? (isPanning ? 'active' : 'ready') : undefined}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
+          {...previewProps}
           aria-label="セトリ画像のプレビュー"
-          role="img"
         />
       </div>
 
@@ -413,6 +459,50 @@ export default function SetlistImage({
         {appearance.size.width} × {appearance.size.height} · {appearance.size.note}
         {pageCount > 1 && ` · 曲数が多いため ${pageCount} 枚に分割しています`}
       </p>
+
+      {isZoomed && (
+        // 背景を直接クリックしたときだけ閉じる(中身のドラッグで閉じないように)
+        <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && closeZoom()}>
+          <div className="modal" role="dialog" aria-modal="true" aria-label="セトリ画像の拡大プレビュー">
+            <div className="flex items-center justify-between gap-3 w-full">
+              <span className="hint">
+                {appearance.size.width} × {appearance.size.height}
+                {pageCount > 1 && ` · ${page + 1} / ${pageCount}`}
+              </span>
+              <div className="flex items-center gap-2">
+                {pageCount > 1 && (
+                  <>
+                    <button
+                      onClick={() => setPage((p) => Math.max(0, p - 1))}
+                      disabled={page === 0}
+                      className="btn"
+                    >
+                      前
+                    </button>
+                    <button
+                      onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                      disabled={page >= pageCount - 1}
+                      className="btn"
+                    >
+                      次
+                    </button>
+                  </>
+                )}
+                <button onClick={closeZoom} className="btn" autoFocus>
+                  閉じる
+                </button>
+              </div>
+            </div>
+
+            <canvas
+              ref={zoomCanvasRef}
+              className="setlist-canvas setlist-canvas-zoom"
+              {...previewProps}
+              aria-label="セトリ画像の拡大プレビュー"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
