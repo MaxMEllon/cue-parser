@@ -4,7 +4,9 @@ import { ShaderBackground } from '@/components/ShaderBackground'
 
 const SITE_URL = 'https://melocil.de/cue-parser/'
 const TITLE = 'cue-parser'
-const DESCRIPTION = 'CUE シートファイルをオンラインで解析、検証、フォーマットできます。'
+const OG_TITLE = 'cue-parser — rekordbox の CUE からセトリを作る'
+const DESCRIPTION =
+  'rekordbox の CUE シートを読み込んで、Mixcloud 用 CUE シート・YouTube タイムライン・セトリ画像・JSON に変換します。時刻オフセットと ID 表記にも対応。ブラウザの中だけで動き、ファイルはどこにも送信しません。'
 
 // melocil.de と同じ並び。ホームへ戻る導線を先頭に置く
 const LINKS = [
@@ -15,17 +17,37 @@ const LINKS = [
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: `${TITLE} — オンライン CUE シートパーサー & バリデーター`,
+  title: `${TITLE} — rekordbox CUE から Mixcloud / YouTube / セトリ画像`,
   description: DESCRIPTION,
-  keywords: ['CUE', 'parser', 'CD-TEXT', 'audio', 'rekordbox', 'DJ', 'CUEシート', 'パーサー'],
+  keywords: [
+    'CUE',
+    'CUEシート',
+    'rekordbox',
+    'Mixcloud',
+    'YouTube',
+    'タイムライン',
+    'セトリ',
+    'セットリスト',
+    'セトリ画像',
+    'DJ',
+    'DJミックス',
+    'parser',
+    'ジェネレーター',
+  ],
   alternates: { canonical: '/' },
   openGraph: {
     type: 'website',
     url: '/',
     siteName: 'melocil.de',
-    title: TITLE,
+    title: OG_TITLE,
     description: DESCRIPTION,
     locale: 'ja_JP',
+  },
+  // og:image を置いていないので、画像なしでも出るカードにしておく
+  twitter: {
+    card: 'summary',
+    title: OG_TITLE,
+    description: DESCRIPTION,
   },
 }
 
