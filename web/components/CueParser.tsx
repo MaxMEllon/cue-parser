@@ -1,12 +1,25 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { parseCueSheet, serializeCueSheet, serializeYouTubeTimeline, formatHMSTime } from '@maxmellon/cue-parser';
-import type { ParseResult, CueSheet } from '@maxmellon/cue-parser';
+import type { ParseResult, CueSheet, HMSTime } from '@maxmellon/cue-parser';
 import { applyOffsetToCueSheet, formatOffset, hasClampedTracks, parseOffsetInput } from '@/utils/offset';
 import { countMissingFields, isBlank } from '@/utils/validation';
-import { applyIdMode, hasAnyId, idFlagsAt, type IdFlags } from '@/utils/idMode';
+import { applyIdMode, hasAnyId, idFlagsAt, NO_ID, type IdFlags } from '@/utils/idMode';
+import {
+  ZERO_TIME,
+  createTrack,
+  insertAt,
+  moveItem,
+  renumberTracks,
+  reorderTracks,
+  shiftTime,
+  trackStartTime,
+  withStartTime,
+} from '@/utils/track';
+import TrackTimeField from '@/components/TrackTimeField';
 import SetlistImage from '@/components/SetlistImage';
 import { DEFAULT_APPEARANCE, type SetlistAppearance } from '@/components/SetlistBackgroundControls';
 
@@ -56,6 +69,8 @@ export default function CueParser() {
   const [appearance, setAppearance] = useState<SetlistAppearance>(DEFAULT_APPEARANCE);
   // ID モード(█ で伏せる)の印。tracks と同じ並びで、曲名とアーティストは個別に持つ
   const [idTracks, setIdTracks] = useState<IdFlags[]>([]);
+  // 並び替えで掴んでいるトラックの位置。掴んでいない間は null
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   // オフセットと ID モードを適用したCUEシート。
   // 全ての出力(解析データ/CUE/YouTube/JSON/セトリ画像)はこれを参照する
@@ -190,6 +205,148 @@ export default function CueParser() {
       next[trackIndex] = { ...flags, [field]: !flags[field] };
       return next;
     });
+  };
+
+  /* 一覧に出しているのはオフセット適用後の時刻なので、入力もその見え方で受け取り、
+     元データへ戻すときにオフセットを引く */
+  const handleTrackTimeChange = (trackIndex: number, time: HMSTime) => {
+    const source = shiftTime(time, -offsetSeconds);
+    updateCueSheet((cueSheet) => ({
+      ...cueSheet,
+      tracks: cueSheet.tracks.map((track, index) =>
+        index === trackIndex ? withStartTime(track, source) : track
+      ),
+    }));
+  };
+
+  /* rekordbox の CUE に入っていない曲(開始前の 1 曲や締めの 1 曲)を足す。
+     時刻は当てられないので、先頭は 00:00:00、末尾は最後のトラックと同じ時刻から始めて、
+     あとは開始時刻の欄で直してもらう */
+  const handleAddTrack = (position: 'head' | 'tail') => {
+    if (!result?.cueSheet) return;
+
+    const tracks = result.cueSheet.tracks;
+    const at = position === 'head' ? 0 : tracks.length;
+    const time = position === 'head' ? ZERO_TIME : trackStartTime(tracks[tracks.length - 1]);
+
+    updateCueSheet((cueSheet) => ({
+      ...cueSheet,
+      tracks: renumberTracks(insertAt(cueSheet.tracks, at, createTrack(time))),
+    }));
+    // ID の印もトラックと同じ並びで空けておく
+    setIdTracks((prev) => insertAt(prev, at, NO_ID));
+  };
+
+  /* 並び替え。時刻は場所に残してトラックの中身だけを動かす(utils/track の reorderTracks)。
+     ID の印は時刻と違ってトラックに付くものなので、一緒に動かす */
+  const handleReorderTracks = useCallback((from: number, to: number) => {
+    if (from === to) return;
+
+    setResult((prev) =>
+      prev?.cueSheet
+        ? { ...prev, cueSheet: { ...prev.cueSheet, tracks: reorderTracks(prev.cueSheet.tracks, from, to) } }
+        : prev
+    );
+    setIdTracks((prev) => {
+      // 印が付いていないトラックのぶんは空いているので、動かす前に埋める
+      const length = Math.max(prev.length, from + 1, to + 1);
+      return moveItem(Array.from({ length }, (_, index) => idFlagsAt(prev, index)), from, to);
+    });
+  }, []);
+
+  /* --- ドラッグでの並び替え ---
+     HTML5 の drag&drop は指で掴めないので、ポインタイベントで組む。
+     掴んでいる間の座標はカードの矩形と突き合わせ、跨いだ時点で入れ替える */
+  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const handleRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const dragRef = useRef<number | null>(null);
+
+  /** 縦位置がどのトラックのカードに乗っているか。一覧の外に出たら端に寄せる */
+  const trackIndexAt = (y: number): number | null => {
+    const cards = cardRefs.current;
+    let first: DOMRect | null = null;
+    let firstIndex: number | null = null;
+    let lastIndex: number | null = null;
+
+    for (let index = 0; index < cards.length; index++) {
+      const rect = cards[index]?.getBoundingClientRect();
+      if (!rect) continue;
+      if (first === null) {
+        first = rect;
+        firstIndex = index;
+      }
+      lastIndex = index;
+      if (y >= rect.top && y <= rect.bottom) return index;
+    }
+
+    if (first === null) return null;
+    return y < first.top ? firstIndex : lastIndex;
+  };
+
+  const startTrackDrag = (index: number, event: ReactPointerEvent<HTMLButtonElement>) => {
+    // マウスは左ボタンだけ。指やペンはそのまま掴ませる
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    dragRef.current = index;
+    setDragIndex(index);
+  };
+
+  // 掴んでいる間だけ window で拾う。カードは並び替えのたびに入れ替わるので、
+  // 掴んだ要素に張り付けると取りこぼす
+  useEffect(() => {
+    if (dragIndex === null) return;
+
+    const handleMove = (event: PointerEvent) => {
+      const from = dragRef.current;
+      if (from === null) return;
+
+      const to = trackIndexAt(event.clientY);
+      if (to === null || to === from) return;
+
+      dragRef.current = to;
+      setDragIndex(to);
+      handleReorderTracks(from, to);
+    };
+
+    const handleEnd = () => {
+      dragRef.current = null;
+      setDragIndex(null);
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleEnd);
+    window.addEventListener('pointercancel', handleEnd);
+    // ドラッグ中に文字が選択されると、掴んでいる感じが崩れる。
+    // 掴んでいることが一覧の外からも分かるよう、ページ全体の形も変えておく
+    const userSelect = document.body.style.userSelect;
+    const cursor = document.body.style.cursor;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'grabbing';
+
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleEnd);
+      window.removeEventListener('pointercancel', handleEnd);
+      document.body.style.userSelect = userSelect;
+      document.body.style.cursor = cursor;
+    };
+  }, [dragIndex, handleReorderTracks]);
+
+  /** つまみにフォーカスしたまま ↑ ↓ でも動かせるようにする(指もマウスも無い人のため) */
+  const handleDragHandleKeyDown = (
+    index: number,
+    trackCount: number,
+    event: ReactKeyboardEvent<HTMLButtonElement>
+  ) => {
+    const to = event.key === 'ArrowUp' ? index - 1 : event.key === 'ArrowDown' ? index + 1 : null;
+    if (to === null) return;
+
+    event.preventDefault();
+    if (to < 0 || to >= trackCount) return;
+
+    handleReorderTracks(index, to);
+    // 動かしたトラックのつまみを掴んだままにする
+    requestAnimationFrame(() => handleRefs.current[to]?.focus());
   };
 
   const handleDeleteTrack = (trackIndex: number) => {
@@ -336,15 +493,45 @@ export default function CueParser() {
 
         {/* Tracks */}
         <section>
-          <h3 className="section-title">トラック ({cueSheet.tracks.length})</h3>
-          <div className="mt-4 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h3 className="section-title">トラック ({cueSheet.tracks.length})</h3>
+            <button onClick={() => handleAddTrack('head')} className="btn">
+              先頭に追加
+            </button>
+          </div>
+          <p className="hint mt-2">
+            {dragIndex === null
+              ? 'つまみ (⠿) をドラッグすると曲順を入れ替えられます。時刻はその場に残ります。'
+              : `TRACK ${(dragIndex + 1).toString().padStart(2, '0')} の位置へ移動中。離すと確定します`}
+          </p>
+          <div className="track-list mt-4 space-y-3" data-reordering={dragIndex === null ? undefined : ''}>
             {cueSheet.tracks.map((track, index) => (
-              <div key={index} className="panel-inset p-4">
+              <div
+                key={index}
+                ref={(element) => {
+                  cardRefs.current[index] = element;
+                }}
+                data-dragging={dragIndex === index ? '' : undefined}
+                className="panel-inset p-4"
+              >
                 <div className="flex items-start justify-between gap-3 mb-4">
                   <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      ref={(element) => {
+                        handleRefs.current[index] = element;
+                      }}
+                      onPointerDown={(event) => startTrackDrag(index, event)}
+                      onKeyDown={(event) => handleDragHandleKeyDown(index, cueSheet.tracks.length, event)}
+                      className="drag-handle"
+                      title="ドラッグで並び替え (↑ ↓ キーでも動かせます)"
+                      aria-label={`トラック ${track.number} を並び替え`}
+                    >
+                      ⠿
+                    </button>
                     <span className="badge badge-solid">
                       TRACK {track.number.toString().padStart(2, '0')}
                     </span>
+                    {dragIndex === index && <span className="badge badge-solid">移動中</span>}
                     <span className="badge">{track.mode}</span>
                     {track.flags?.map((flag, i) => (
                       <span key={i} className="badge">{flag}</span>
@@ -415,6 +602,17 @@ export default function CueParser() {
                       className="field"
                     />
                   </div>
+                  <div>
+                    <label className="label mb-1 block" htmlFor={`track-${index}-time`}>
+                      開始時刻
+                    </label>
+                    <TrackTimeField
+                      id={`track-${index}-time`}
+                      value={trackStartTime(track)}
+                      ariaLabel={`トラック ${track.number} の開始時刻`}
+                      onCommit={(time) => handleTrackTimeChange(index, time)}
+                    />
+                  </div>
                   {track.isrc && (
                     <div>
                       <dt className="label mb-1">ISRC</dt>
@@ -442,15 +640,18 @@ export default function CueParser() {
                       </div>
                     )}
 
-                    {track.indexes && track.indexes.length > 0 && (
+                    {/* INDEX 01 は上の「開始時刻」で編集するので、ここには残りだけ出す */}
+                    {track.indexes && track.indexes.some((idx) => idx.number !== 1) && (
                       <div>
                         <dt className="label mb-1">Indexes</dt>
                         <dd>
-                          {track.indexes.map((idx, i) => (
-                            <div key={i} className="value">
-                              {idx.number.toString().padStart(2, '0')} {formatHMSTime(idx.time)}
-                            </div>
-                          ))}
+                          {track.indexes
+                            .filter((idx) => idx.number !== 1)
+                            .map((idx, i) => (
+                              <div key={i} className="value">
+                                {idx.number.toString().padStart(2, '0')} {formatHMSTime(idx.time)}
+                              </div>
+                            ))}
                         </dd>
                       </div>
                     )}
@@ -466,6 +667,9 @@ export default function CueParser() {
               </div>
             ))}
           </div>
+          <button onClick={() => handleAddTrack('tail')} className="btn btn-block mt-3">
+            末尾に追加
+          </button>
         </section>
       </div>
     );
