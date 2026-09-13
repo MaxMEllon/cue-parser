@@ -299,9 +299,72 @@
     letter-spacing: 0.1em;
   }
 
+  /* 一覧の下に置く、幅いっぱいの追加ボタン。枠を破線にして「ここに増やせる」を示す */
+  .btn-block {
+    width: 100%;
+    border-style: dashed;
+    color: var(--muted);
+  }
+
+  .btn-block:hover:not(:disabled) {
+    color: var(--fg);
+  }
+
   .btn:disabled {
     opacity: 0.35;
     cursor: not-allowed;
+  }
+
+  /* 並び替えのつまみ。touch-action を切らないと指のドラッグがスクロールに持っていかれる */
+  .drag-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.15rem 0.35rem;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1;
+    touch-action: none;
+    cursor: grab;
+  }
+
+  .drag-handle:hover,
+  .drag-handle:focus-visible {
+    border-color: var(--border);
+    color: var(--fg);
+  }
+
+  .drag-handle:focus-visible {
+    outline: 1px solid var(--fg);
+    outline-offset: 2px;
+  }
+
+  /* 並び替え中は、掴んでいる 1 枚だけを残してほかを沈める。
+     白黒なので「掴んでいる側を強く」ではなく「それ以外を弱く」で差を作る */
+  .track-list > * {
+    transition: opacity 0.12s linear;
+  }
+
+  .track-list[data-reordering] > *:not([data-dragging]) {
+    opacity: 0.3;
+    /* 掴んでいる間は下のカードの入力欄に触れさせない */
+    pointer-events: none;
+  }
+
+  /* 掴んでいるカード。面を起こし、白い枠と影で一段持ち上げる */
+  .panel-inset[data-dragging] {
+    border-color: var(--fg);
+    background: var(--raised);
+    box-shadow: 0 0 0 1px var(--fg), 0 14px 28px rgba(0, 0, 0, 0.7);
+    cursor: grabbing;
+  }
+
+  .panel-inset[data-dragging] .drag-handle {
+    color: var(--fg);
+    cursor: grabbing;
   }
 
   .btn:focus-visible {
