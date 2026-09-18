@@ -148,7 +148,7 @@ export default function CueParser() {
     const parseResult = parseCueSheet(cueContent);
     setResult(parseResult);
     setIdTracks([]);
-    setActiveTab('serialized');
+    setActiveTab('parsed');
   }, [input]);
 
   const handleLoadSample = () => {
