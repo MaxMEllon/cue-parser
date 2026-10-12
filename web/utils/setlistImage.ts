@@ -1,4 +1,5 @@
 import type { CueSheet } from '@maxmellon/cue-parser';
+import { BG, BORDER, BORDER_STRONG, BORDER_SUBTLE, FG, MUTED } from './designTokens';
 
 /**
  * セトリ画像の組版と描画。
@@ -44,9 +45,9 @@ export const SETLIST_SIZES: readonly SetlistSize[] = [
 
 export const DEFAULT_SETLIST_SIZE: SetlistSize = SETLIST_SIZES[0];
 
-/* app/globals.css のトークンの写し。あちらを触ったらこちらも揃える。
+/* 色は design-system のトークン(utils/designTokens.ts、app/tokens.css と同じ値)。
    色相は使わない。区別は明度・字間・罫線だけで付ける。 */
-const COLOR_BG = '#000000';
+const COLOR_BG = BG;
 
 interface Palette {
   fg: string;
@@ -61,11 +62,11 @@ interface Palette {
 
 /** 既定。黒地に白文字 */
 const LIGHT_PALETTE: Palette = {
-  fg: '#f2f2f3',
-  muted: '#a1a1a8',
-  rule: 'rgba(255, 255, 255, 0.16)',
-  ruleStrong: 'rgba(255, 255, 255, 0.45)',
-  hairline: 'rgba(255, 255, 255, 0.10)',
+  fg: FG,
+  muted: MUTED,
+  rule: BORDER,
+  ruleStrong: BORDER_STRONG,
+  hairline: BORDER_SUBTLE,
   shadow: 'rgba(0, 0, 0, 0.72)',
   scrim: '0, 0, 0',
 };
