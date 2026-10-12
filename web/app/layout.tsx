@@ -1,4 +1,6 @@
 import type { Metadata } from 'next'
+// デザイントークン(MaxMEllon/design-system の写し)。globals.css が参照するので先に読む
+import './tokens.css'
 import './globals.css'
 import { ShaderBackground } from '@/components/ShaderBackground'
 
