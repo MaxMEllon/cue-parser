@@ -3,11 +3,12 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { parseCueSheet, serializeCueSheet, serializeYouTubeTimeline, formatHMSTime } from '@maxmellon/cue-parser';
+import { parseCueSheet, serializeCueSheet, formatHMSTime } from '@maxmellon/cue-parser';
 import type { ParseResult, CueSheet, HMSTime } from '@maxmellon/cue-parser';
 import { applyOffsetToCueSheet, formatOffset, hasClampedTracks, parseOffsetInput } from '@/utils/offset';
 import { countMissingFields, isBlank } from '@/utils/validation';
 import { applyIdMode, hasAnyId, idFlagsAt, NO_ID, type IdFlags } from '@/utils/idMode';
+import { applyWDropMode, canWDropAt, isWDropAt, serializeYouTubeTimelineWithWDrop } from '@/utils/wDrop';
 import {
   ZERO_TIME,
   createTrack,
@@ -69,6 +70,8 @@ export default function CueParser() {
   const [appearance, setAppearance] = useState<SetlistAppearance>(DEFAULT_APPEARANCE);
   // ID モード(█ で伏せる)の印。tracks と同じ並びで、曲名とアーティストは個別に持つ
   const [idTracks, setIdTracks] = useState<IdFlags[]>([]);
+  // W ドロップ (マッシュアップ) の印。tracks と同じ並び
+  const [wDropTracks, setWDropTracks] = useState<boolean[]>([]);
   // 並び替えで掴んでいるトラックの位置。掴んでいない間は null
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
@@ -80,6 +83,12 @@ export default function CueParser() {
         ? applyIdMode(applyOffsetToCueSheet(result.cueSheet, offsetSeconds), idTracks)
         : undefined,
     [result, offsetSeconds, idTracks]
+  );
+
+  // セトリ画像は、W ドロップの曲名に "w/" を付けたものを使う(YouTube タイムラインは字下げも足すので別に組む)
+  const wDropCueSheet = useMemo(
+    () => (offsetCueSheet ? applyWDropMode(offsetCueSheet, wDropTracks) : undefined),
+    [offsetCueSheet, wDropTracks]
   );
 
   const isOffsetClamped = useMemo(
@@ -148,6 +157,7 @@ export default function CueParser() {
     const parseResult = parseCueSheet(cueContent);
     setResult(parseResult);
     setIdTracks([]);
+    setWDropTracks([]);
     setActiveTab('parsed');
   }, [input]);
 
@@ -161,6 +171,7 @@ export default function CueParser() {
     setInput('');
     setResult(null);
     setIdTracks([]);
+    setWDropTracks([]);
     applyOffsetSeconds(0);
     appearance.source?.release();
     setAppearance(DEFAULT_APPEARANCE);
@@ -187,7 +198,7 @@ export default function CueParser() {
     if (!offsetCueSheet) return;
 
     try {
-      const youtubeContent = serializeYouTubeTimeline(offsetCueSheet);
+      const youtubeContent = serializeYouTubeTimelineWithWDrop(offsetCueSheet, wDropTracks);
       await navigator.clipboard.writeText(youtubeContent);
       setCopyStatus('copied');
       setTimeout(() => setCopyStatus('idle'), 2000);
@@ -203,6 +214,14 @@ export default function CueParser() {
       const next = [...prev];
       const flags = idFlagsAt(next, trackIndex);
       next[trackIndex] = { ...flags, [field]: !flags[field] };
+      return next;
+    });
+  };
+
+  const toggleWDropMode = (trackIndex: number) => {
+    setWDropTracks((prev) => {
+      const next = [...prev];
+      next[trackIndex] = !isWDropAt(next, trackIndex);
       return next;
     });
   };
@@ -235,10 +254,11 @@ export default function CueParser() {
     }));
     // ID の印もトラックと同じ並びで空けておく
     setIdTracks((prev) => insertAt(prev, at, NO_ID));
+    setWDropTracks((prev) => insertAt(prev, at, false));
   };
 
   /* 並び替え。時刻は場所に残してトラックの中身だけを動かす(utils/track の reorderTracks)。
-     ID の印は時刻と違ってトラックに付くものなので、一緒に動かす */
+     ID と W ドロップの印は時刻と違ってトラックに付くものなので、一緒に動かす */
   const handleReorderTracks = useCallback((from: number, to: number) => {
     if (from === to) return;
 
@@ -251,6 +271,10 @@ export default function CueParser() {
       // 印が付いていないトラックのぶんは空いているので、動かす前に埋める
       const length = Math.max(prev.length, from + 1, to + 1);
       return moveItem(Array.from({ length }, (_, index) => idFlagsAt(prev, index)), from, to);
+    });
+    setWDropTracks((prev) => {
+      const length = Math.max(prev.length, from + 1, to + 1);
+      return moveItem(Array.from({ length }, (_, index) => isWDropAt(prev, index)), from, to);
     });
   }, []);
 
@@ -355,6 +379,7 @@ export default function CueParser() {
     const updatedTracks = result.cueSheet.tracks.filter((_, index) => index !== trackIndex);
     // ID モードの印もトラックと同じ並びで詰める
     setIdTracks((prev) => prev.filter((_, index) => index !== trackIndex));
+    setWDropTracks((prev) => prev.filter((_, index) => index !== trackIndex));
 
     // If no tracks remain, clear the result
     if (updatedTracks.length === 0) {
@@ -527,6 +552,16 @@ export default function CueParser() {
                       aria-label={`トラック ${track.number} を並び替え`}
                     >
                       ⠿
+                    </button>
+                    <button
+                      onClick={() => toggleWDropMode(index)}
+                      className={isWDropAt(wDropTracks, index) ? 'btn btn-xs btn-primary' : 'btn btn-xs'}
+                      aria-pressed={isWDropAt(wDropTracks, index)}
+                      disabled={!canWDropAt(index)}
+                      title="W ドロップ (マッシュアップ) にする。YouTube タイムラインとセトリ画像の曲名に w/ が付きます"
+                      aria-label={`トラック ${track.number} を W ドロップにする`}
+                    >
+                      W
                     </button>
                     <span className="badge badge-solid">
                       TRACK {track.number.toString().padStart(2, '0')}
@@ -956,7 +991,7 @@ export default function CueParser() {
                       </button>
                     </div>
                     <pre className="code-block">
-                      {serializeYouTubeTimeline(offsetCueSheet)}
+                      {serializeYouTubeTimelineWithWDrop(offsetCueSheet, wDropTracks)}
                     </pre>
                   </div>
                 )}
@@ -972,7 +1007,7 @@ export default function CueParser() {
 
                 {activeTab === 'setlist' && (
                   <SetlistImage
-                    cueSheet={offsetCueSheet}
+                    cueSheet={wDropCueSheet ?? offsetCueSheet}
                     appearance={appearance}
                     onAppearanceChange={setAppearance}
                   />
